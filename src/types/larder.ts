@@ -72,6 +72,7 @@ export interface Recipe {
   prepMinutes: number;
   cookMinutes: number;
   photoUri: string | null;
+  sourceUrl: string | null;
   tags: string[];
   steps: string[];
   ingredients: RecipeIngredient[];
@@ -86,6 +87,7 @@ export interface RecipeInput {
   prepMinutes: number;
   cookMinutes: number;
   photoUri?: string | null;
+  sourceUrl?: string | null;
   tags: string[];
   steps: string[];
   ingredients: RecipeIngredientInput[];
@@ -137,7 +139,32 @@ export interface PantryMatchSummary {
   lowCount: number;
   totalCount: number;
   ratio: number;
+  usesExpiringCount: number;
   ingredientStatus: Record<number, StockLevel | 'missing'>;
+}
+
+export interface StapleHistoryEntry {
+  normalizedName: string;
+  name: string;
+  category: GroceryCategory;
+  location: PantryLocation;
+  unit: string;
+  useCount: number;
+  lastUsedAt: string;
+}
+
+export interface BarcodeProductEntry {
+  barcode: string;
+  name: string;
+  category: GroceryCategory;
+  location: PantryLocation;
+  unit: string;
+  updatedAt: string;
+}
+
+export interface BackupRecipeEntry extends RecipeInput {
+  photoBase64?: string | null;
+  photoExt?: string | null;
 }
 
 export interface LarderBackupPayload {
@@ -145,7 +172,7 @@ export interface LarderBackupPayload {
   app: 'Larder';
   exportedAt: string;
   pantryItems: PantryItemInput[];
-  recipes: RecipeInput[];
+  recipes: BackupRecipeEntry[];
   mealPlanEntries: {
     weekStart: string;
     dayIndex: number;

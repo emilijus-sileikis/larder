@@ -87,6 +87,7 @@ export default function RecipeEditorScreen() {
     initialDraft ? String(initialDraft.cookMinutes) : '15'
   );
   const [photoUri, setPhotoUri] = useState<string | null>(initialDraft?.photoUri ?? null);
+  const [sourceUrl, setSourceUrl] = useState<string>(initialDraft?.sourceUrl ?? '');
   const [newlyPickedPhotos, setNewlyPickedPhotos] = useState<string[]>(() =>
     !existing && pendingImportedRecipe?.photoUri
       ? [pendingImportedRecipe.photoUri]
@@ -129,6 +130,9 @@ export default function RecipeEditorScreen() {
     if (draft.photoUri) {
       setNewlyPickedPhotos((prev) => [...prev, draft.photoUri!]);
       setPhotoUri(draft.photoUri);
+    }
+    if (draft.sourceUrl) {
+      setSourceUrl(draft.sourceUrl);
     }
     setTags(draft.tags);
     setIngredients(
@@ -259,6 +263,7 @@ export default function RecipeEditorScreen() {
         prepMinutes,
         cookMinutes,
         photoUri,
+        sourceUrl: sourceUrl.trim() || null,
         tags,
         ingredients: cleanIngredients,
         steps: cleanSteps,
@@ -389,6 +394,18 @@ export default function RecipeEditorScreen() {
             placeholderTextColor={colors.textMuted}
             multiline
             style={[styles.input, { minHeight: 68, textAlignVertical: 'top' }]}
+          />
+
+          <Text style={styles.label}>{t.sourceUrlLabel}</Text>
+          <TextInput
+            value={sourceUrl}
+            onChangeText={setSourceUrl}
+            placeholder={t.sourceUrlPlaceholder}
+            placeholderTextColor={colors.textMuted}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+            style={styles.input}
           />
 
           <View style={styles.tripleRow}>

@@ -6,6 +6,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   View,
 } from 'react-native';
@@ -36,7 +37,7 @@ const LANGUAGE_OPTIONS: { id: Language; label: string }[] = [
   { id: 'lt', label: 'Lietuvių' },
 ];
 
-export function SettingsModal({ visible, onClose }: SettingsModalProps) {
+function SettingsContent({ onClose }: { onClose: () => void }) {
   const {
     colors,
     language,
@@ -44,6 +45,9 @@ export function SettingsModal({ visible, onClose }: SettingsModalProps) {
     t,
     themeMode,
     setThemeMode,
+    expiryNotificationsEnabled,
+    setExpiryNotificationsEnabled,
+    lastBackupAt,
     recipes,
     pantryItems,
     groceryItems,
@@ -56,11 +60,30 @@ export function SettingsModal({ visible, onClose }: SettingsModalProps) {
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [includePhotos, setIncludePhotos] = useState(false);
+  const [nowMs] = useState(() => Date.now());
+
+  const backupStatusLabel = useMemo(() => {
+    if (!lastBackupAt) return t.lastBackedUpNever;
+    const ms = nowMs - new Date(lastBackupAt).getTime();
+    if (!Number.isFinite(ms) || ms < 0) return t.lastBackedUpToday;
+    const days = Math.floor(ms / 86_400_000);
+    if (days <= 0) return t.lastBackedUpToday;
+    return t.lastBackedUpDays(days);
+  }, [lastBackupAt, nowMs, t]);
+
+  const handleToggleExpiryAlerts = async (next: boolean) => {
+    hapticSelection();
+    const ok = await setExpiryNotificationsEnabled(next);
+    if (next && !ok) {
+      Alert.alert(t.notificationsDeniedTitle, t.notificationsDeniedMsg);
+    }
+  };
 
   const handleExport = async () => {
     try {
       setBusyAction('export');
-      const shared = await exportBackup();
+      const shared = await exportBackup({ includePhotos });
       if (shared) {
         hapticSuccess();
       } else {
@@ -155,13 +178,7 @@ export function SettingsModal({ visible, onClose }: SettingsModalProps) {
   };
 
   return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      presentationStyle="pageSheet"
-      onRequestClose={onClose}
-    >
-      <View style={[styles.sheet, { paddingTop: Math.max(insets.top, 16) }]}>
+    <View style={[styles.sheet, { paddingTop: Math.max(insets.top, 16) }]}>
         <View style={styles.header}>
           <View style={{ flex: 1, paddingRight: 10 }}>
             <Text style={styles.title}>{t.settingsTitle}</Text>
@@ -256,9 +273,53 @@ export function SettingsModal({ visible, onClose }: SettingsModalProps) {
             })}
           </View>
 
-          {/* Backup & Restore */}
-          <Text style={styles.sectionTitle}>{t.backupSection}</Text>
+          {/* Local Expiry Notifications (#5) */}
+          <Text style={styles.sectionTitle}>{t.expiryRemindersSection}</Text>
           <View style={styles.card}>
+            <View style={styles.switchRow}>
+              <View style={[styles.rowIcon, { backgroundColor: colors.warningSoft }]}>
+                <Ionicons name="notifications-outline" size={20} color={colors.warning} />
+              </View>
+              <View style={styles.rowText}>
+                <Text style={styles.rowTitle}>{t.expiryRemindersTitle}</Text>
+                <Text style={styles.rowDesc}>{t.expiryRemindersDesc}</Text>
+              </View>
+              <Switch
+                value={expiryNotificationsEnabled}
+                onValueChange={handleToggleExpiryAlerts}
+                trackColor={{ false: colors.borderStrong, true: colors.primary }}
+                thumbColor={colors.white}
+              />
+            </View>
+          </View>
+
+          {/* Backup & Restore (#14) */}
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionTitle}>{t.backupSection}</Text>
+            <Text style={styles.backupBadge}>{backupStatusLabel}</Text>
+          </View>
+          <View style={styles.card}>
+            <View style={styles.switchRow}>
+              <View style={[styles.rowIcon, { backgroundColor: colors.surfaceAlt }]}>
+                <Ionicons name="images-outline" size={19} color={colors.textSecondary} />
+              </View>
+              <View style={styles.rowText}>
+                <Text style={styles.rowTitle}>{t.includePhotosTitle}</Text>
+                <Text style={styles.rowDesc}>{t.includePhotosDesc}</Text>
+              </View>
+              <Switch
+                value={includePhotos}
+                onValueChange={(v) => {
+                  hapticSelection();
+                  setIncludePhotos(v);
+                }}
+                trackColor={{ false: colors.borderStrong, true: colors.primary }}
+                thumbColor={colors.white}
+              />
+            </View>
+
+            <View style={styles.divider} />
+
             <Pressable
               disabled={busyAction !== null}
               onPress={handleExport}
@@ -347,6 +408,18 @@ export function SettingsModal({ visible, onClose }: SettingsModalProps) {
           </View>
         </ScrollView>
       </View>
+  );
+}
+
+export function SettingsModal({ visible, onClose }: SettingsModalProps) {
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={onClose}
+    >
+      {visible ? <SettingsContent onClose={onClose} /> : null}
     </Modal>
   );
 }
@@ -412,6 +485,11 @@ const createStyles = (c: ThemeColors) =>
       fontWeight: '600',
       color: c.textSecondary,
     },
+    sectionHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
     sectionTitle: {
       fontSize: 12,
       fontWeight: '700',
@@ -420,6 +498,12 @@ const createStyles = (c: ThemeColors) =>
       color: c.textSecondary,
       marginBottom: 8,
       marginTop: 4,
+    },
+    backupBadge: {
+      fontSize: 11,
+      fontWeight: '600',
+      color: c.textMuted,
+      marginBottom: 8,
     },
     segmentRow: {
       flexDirection: 'row',
@@ -457,6 +541,12 @@ const createStyles = (c: ThemeColors) =>
       borderColor: c.border,
       marginBottom: 22,
       overflow: 'hidden',
+    },
+    switchRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      padding: 14,
+      gap: 12,
     },
     rowBtn: {
       flexDirection: 'row',

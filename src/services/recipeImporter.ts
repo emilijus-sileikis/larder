@@ -78,7 +78,7 @@ export async function importRecipeFromUrl(rawUrl: string): Promise<RecipeInput> 
     clearTimeout(timer);
   }
 
-  const { recipe, imageUrl } = extractRecipeFromHtml(html);
+  const { recipe, imageUrl } = extractRecipeFromHtml(html, url);
 
   let localPhotoUri: string | null = null;
   if (imageUrl) {
@@ -87,6 +87,7 @@ export async function importRecipeFromUrl(rawUrl: string): Promise<RecipeInput> 
 
   return {
     ...recipe,
+    sourceUrl: url,
     photoUri: localPhotoUri,
   };
 }

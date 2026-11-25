@@ -1,28 +1,45 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
+  SectionList,
+  Share,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppHeader } from '@/components/AppHeader';
 import { EmptyState } from '@/components/EmptyState';
 import { GroceryEditModal } from '@/components/GroceryEditModal';
 import { SettingsModal } from '@/components/SettingsModal';
+import { SwipeableRow } from '@/components/SwipeableRow';
+import { UndoSnackbar } from '@/components/UndoSnackbar';
 import { GROCERY_CATEGORIES } from '@/constants/categories';
 import { useLarder } from '@/db/LarderContext';
 import { GROCERY_CATEGORY_LABELS } from '@/i18n/translations';
 import type { ThemeColors } from '@/theme/colors';
-import type { GroceryCategory, GroceryItem } from '@/types/larder';
+import type { GroceryCategory, GroceryItem, IoniconName } from '@/types/larder';
 import { hapticLight, hapticMedium, hapticSelection, hapticSuccess } from '@/utils/haptics';
-import { formatQuantityWithUnit, parseQuickGroceryInput } from '@/utils/ingredients';
+import {
+  formatGroceryListAsPlainText,
+  formatQuantityWithUnit,
+  parseQuickGroceryInput,
+} from '@/utils/ingredients';
+
+interface GrocerySection {
+  key: string;
+  title: string;
+  icon: IoniconName;
+  isCheckedSection: boolean;
+  data: GroceryItem[];
+}
 
 export default function GroceriesScreen() {
   const {
@@ -30,10 +47,12 @@ export default function GroceriesScreen() {
     language,
     t,
     groceryItems,
+    stapleHistory,
     addGroceryItem,
     editGroceryItem,
     toggleGroceryChecked,
     removeGroceryItem,
+    restoreGroceryItem,
     moveCheckedToPantry,
     clearChecked,
   } = useLarder();
@@ -48,7 +67,21 @@ export default function GroceriesScreen() {
   const [quickUnit, setQuickUnit] = useState('');
   const [quickCategory, setQuickCategory] = useState<GroceryCategory>('produce');
   const [showQuickOptions, setShowQuickOptions] = useState(false);
-  const [bannerMsg, setBannerMsg] = useState<string | null>(null);
+
+  // Toast & Undo state
+  const [snackbar, setSnackbar] = useState<{
+    message: string;
+    undoItem?: GroceryItem;
+  } | null>(null);
+  const snackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showSnackbar = (message: string, undoItem?: GroceryItem) => {
+    if (snackTimerRef.current) clearTimeout(snackTimerRef.current);
+    setSnackbar({ message, undoItem });
+    snackTimerRef.current = setTimeout(() => {
+      setSnackbar(null);
+    }, undoItem ? 4200 : 2600);
+  };
 
   const uncheckedItems = useMemo(
     () => groceryItems.filter((g) => !g.checked),
@@ -59,25 +92,47 @@ export default function GroceriesScreen() {
     [groceryItems]
   );
 
-  const aisleSections = useMemo(() => {
+  // Autocomplete suggestions from staple history (#7)
+  const quickSuggestions = useMemo(() => {
+    const q = quickName.trim().toLowerCase();
+    if (!q) return [];
+    const activeSet = new Set(uncheckedItems.map((i) => i.normalizedName));
+    return stapleHistory
+      .filter(
+        (h) =>
+          h.name.toLowerCase().includes(q) &&
+          !activeSet.has(h.normalizedName)
+      )
+      .slice(0, 5);
+  }, [quickName, stapleHistory, uncheckedItems]);
+
+  const sections = useMemo<GrocerySection[]>(() => {
     const byCat = new Map<GroceryCategory, GroceryItem[]>();
     for (const item of uncheckedItems) {
       const list = byCat.get(item.category) ?? [];
       list.push(item);
       byCat.set(item.category, list);
     }
-    return GROCERY_CATEGORIES.map((meta) => ({
-      meta,
-      items: byCat.get(meta.id) ?? [],
-    })).filter((s) => s.items.length > 0);
-  }, [uncheckedItems]);
 
-  const flashBanner = (msg: string) => {
-    setBannerMsg(msg);
-    setTimeout(() => {
-      setBannerMsg((cur) => (cur === msg ? null : cur));
-    }, 2600);
-  };
+    const result: GrocerySection[] = GROCERY_CATEGORIES.map((meta) => ({
+      key: meta.id,
+      title: GROCERY_CATEGORY_LABELS[language][meta.id].label,
+      icon: meta.icon,
+      isCheckedSection: false,
+      data: byCat.get(meta.id) ?? [],
+    })).filter((s) => s.data.length > 0);
+
+    if (checkedItems.length > 0) {
+      result.push({
+        key: '__checked__',
+        title: t.inCartSection(checkedItems.length),
+        icon: 'checkmark-done-outline',
+        isCheckedSection: true,
+        data: checkedItems,
+      });
+    }
+    return result;
+  }, [uncheckedItems, checkedItems, language, t]);
 
   const handleQuickAdd = async () => {
     const raw = quickName.trim();
@@ -112,7 +167,26 @@ export default function GroceriesScreen() {
     setQuickQty('');
     setQuickUnit('');
     if (res.merged > 0) {
-      flashBanner(t.mergedBanner(name));
+      showSnackbar(t.mergedBanner(name));
+    }
+  };
+
+  const handleSelectSuggestion = async (suggestion: {
+    name: string;
+    category: GroceryCategory;
+    unit: string;
+  }) => {
+    const res = await addGroceryItem({
+      name: suggestion.name,
+      quantity: null,
+      unit: suggestion.unit,
+      category: suggestion.category,
+    });
+    hapticLight();
+    setQuickName('');
+    setQuickCategory(suggestion.category);
+    if (res.merged > 0) {
+      showSnackbar(t.mergedBanner(suggestion.name));
     }
   };
 
@@ -126,11 +200,24 @@ export default function GroceriesScreen() {
     toggleGroceryChecked(item.id, next);
   };
 
+  const handleSwipeDelete = async (item: GroceryItem) => {
+    await removeGroceryItem(item.id);
+    showSnackbar(t.deletedItemToast(item.name), item);
+  };
+
+  const handleUndoDelete = async () => {
+    if (!snackbar?.undoItem) return;
+    const toRestore = snackbar.undoItem;
+    setSnackbar(null);
+    await restoreGroceryItem(toRestore);
+    hapticSuccess();
+  };
+
   const handleMoveToPantry = async () => {
     if (checkedItems.length === 0) return;
     const count = await moveCheckedToPantry();
     hapticSuccess();
-    flashBanner(count === 1 ? t.movedToPantryOne : t.movedToPantryMany(count));
+    showSnackbar(count === 1 ? t.movedToPantryOne : t.movedToPantryMany(count));
   };
 
   const handleClearChecked = () => {
@@ -148,6 +235,34 @@ export default function GroceriesScreen() {
     ]);
   };
 
+  const handleShareOrCopyList = () => {
+    const plainText = formatGroceryListAsPlainText(
+      groceryItems,
+      GROCERY_CATEGORIES.map((c) => c.id),
+      (cat) => GROCERY_CATEGORY_LABELS[language][cat].label,
+      t.groceriesTitle
+    );
+    if (!plainText) return;
+    hapticSelection();
+    Alert.alert(t.shareListTitle, undefined, [
+      {
+        text: t.shareListActionCopy,
+        onPress: async () => {
+          await Clipboard.setStringAsync(plainText);
+          hapticSuccess();
+          showSnackbar(t.listCopiedToast);
+        },
+      },
+      {
+        text: t.shareListActionShare,
+        onPress: async () => {
+          await Share.share({ message: plainText, title: t.groceriesTitle });
+        },
+      },
+      { text: t.cancel, style: 'cancel' },
+    ]);
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <AppHeader
@@ -160,6 +275,17 @@ export default function GroceriesScreen() {
               : t.groceriesSubtitleEmpty
         }
         onOpenSettings={() => setSettingsOpen(true)}
+        rightSlot={
+          uncheckedItems.length > 0 ? (
+            <Pressable
+              onPress={handleShareOrCopyList}
+              style={({ pressed }) => [styles.shareBtn, pressed && { opacity: 0.75 }]}
+              accessibilityLabel={t.shareListTitle}
+            >
+              <Ionicons name="share-outline" size={19} color={colors.textSecondary} />
+            </Pressable>
+          ) : null
+        }
       />
 
       <KeyboardAvoidingView
@@ -185,7 +311,10 @@ export default function GroceriesScreen() {
               }}
               style={[
                 styles.tuneBtn,
-                showQuickOptions && { backgroundColor: colors.primarySoft, borderColor: colors.primary },
+                showQuickOptions && {
+                  backgroundColor: colors.primarySoft,
+                  borderColor: colors.primary,
+                },
               ]}
               accessibilityLabel="Toggle quantity and aisle options"
             >
@@ -208,6 +337,27 @@ export default function GroceriesScreen() {
               <Ionicons name="add" size={22} color={colors.white} />
             </Pressable>
           </View>
+
+          {/* Staple History Autocomplete (#7) */}
+          {quickSuggestions.length > 0 ? (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={styles.suggestionsRow}
+            >
+              {quickSuggestions.map((s) => (
+                <Pressable
+                  key={s.normalizedName}
+                  onPress={() => handleSelectSuggestion(s)}
+                  style={styles.suggestionChip}
+                >
+                  <Ionicons name="add-circle-outline" size={14} color={colors.primary} />
+                  <Text style={styles.suggestionText}>{s.name}</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          ) : null}
 
           {showQuickOptions ? (
             <View style={styles.quickDetails}>
@@ -261,164 +411,141 @@ export default function GroceriesScreen() {
           ) : null}
         </View>
 
-        {bannerMsg ? (
-          <View style={styles.banner}>
-            <Ionicons name="checkmark-circle" size={16} color={colors.primary} />
-            <Text style={styles.bannerText}>{bannerMsg}</Text>
-          </View>
-        ) : null}
-
-        <ScrollView
+        <SectionList
+          sections={sections}
+          keyExtractor={(item) => String(item.id)}
+          stickySectionHeadersEnabled={false}
+          keyboardShouldPersistTaps="handled"
           contentContainerStyle={[
             styles.scrollContent,
-            checkedItems.length > 0 && { paddingBottom: 100 },
+            checkedItems.length > 0 && { paddingBottom: 112 },
           ]}
-          keyboardShouldPersistTaps="handled"
-        >
-          {groceryItems.length === 0 ? (
+          ListEmptyComponent={
             <EmptyState
               icon="cart-outline"
               title={t.groceriesEmptyTitle}
               description={t.groceriesEmptyDesc}
             />
-          ) : (
-            <>
-              {aisleSections.map(({ meta, items }) => (
-                <View key={meta.id} style={styles.section}>
-                  <View style={styles.sectionHeader}>
-                    <View style={styles.sectionTitleWrap}>
-                      <Ionicons name={meta.icon} size={16} color={colors.primary} />
-                      <Text style={styles.sectionTitle}>
-                        {GROCERY_CATEGORY_LABELS[language][meta.id].label}
-                      </Text>
-                    </View>
-                    <Text style={styles.sectionCount}>{items.length}</Text>
-                  </View>
-
-                  <View style={styles.sectionCard}>
-                    {items.map((item, idx) => {
-                      const qtyBadge = formatQuantityWithUnit(item.quantity, item.unit);
-                      return (
-                        <View key={item.id}>
-                          {idx > 0 ? <View style={styles.rowDivider} /> : null}
-                          <Pressable
-                            onPress={() => handleToggle(item)}
-                            onLongPress={() => {
-                              hapticSelection();
-                              setEditingItem(item);
-                            }}
-                            style={({ pressed }) => [
-                              styles.itemRow,
-                              pressed && styles.itemRowPressed,
-                            ]}
-                          >
-                            <View style={styles.checkbox}>
-                              {item.checked ? (
-                                <Ionicons name="checkmark" size={16} color={colors.white} />
-                              ) : null}
-                            </View>
-                            <View style={styles.itemBody}>
-                              <View style={styles.itemTopLine}>
-                                <Text style={styles.itemName} numberOfLines={2}>
-                                  {item.name}
-                                </Text>
-                                {qtyBadge ? (
-                                  <View style={styles.qtyPill}>
-                                    <Text style={styles.qtyPillText}>{qtyBadge}</Text>
-                                  </View>
-                                ) : null}
-                              </View>
-                              {item.sourceNote ? (
-                                <Text style={styles.sourceNote} numberOfLines={1}>
-                                  {item.sourceNote}
-                                </Text>
-                              ) : null}
-                            </View>
-                            <Pressable
-                              onPress={() => {
-                                hapticSelection();
-                                setEditingItem(item);
-                              }}
-                              style={styles.editIconBtn}
-                              hitSlop={10}
-                              accessibilityLabel={`Edit ${item.name}`}
-                            >
-                              <Ionicons
-                                name="pencil-outline"
-                                size={16}
-                                color={colors.textMuted}
-                              />
-                            </Pressable>
-                          </Pressable>
-                        </View>
-                      );
-                    })}
-                  </View>
-                </View>
-              ))}
-
-              {checkedItems.length > 0 ? (
-                <View style={styles.section}>
-                  <View style={styles.sectionHeader}>
-                    <View style={styles.sectionTitleWrap}>
-                      <Ionicons
-                        name="checkmark-done-outline"
-                        size={16}
-                        color={colors.textMuted}
-                      />
-                      <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
-                        {t.inCartSection(checkedItems.length)}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <View style={[styles.sectionCard, { opacity: 0.85 }]}>
-                    {checkedItems.map((item, idx) => {
-                      const qtyBadge = formatQuantityWithUnit(item.quantity, item.unit);
-                      return (
-                        <View key={item.id}>
-                          {idx > 0 ? <View style={styles.rowDivider} /> : null}
-                          <Pressable
-                            onPress={() => handleToggle(item)}
-                            style={({ pressed }) => [
-                              styles.itemRow,
-                              pressed && styles.itemRowPressed,
-                            ]}
-                          >
-                            <View style={[styles.checkbox, styles.checkboxChecked]}>
-                              <Ionicons name="checkmark" size={16} color={colors.white} />
-                            </View>
-                            <View style={styles.itemBody}>
-                              <View style={styles.itemTopLine}>
-                                <Text
-                                  style={[styles.itemName, styles.itemNameChecked]}
-                                  numberOfLines={2}
-                                >
-                                  {item.name}
-                                </Text>
-                                {qtyBadge ? (
-                                  <Text style={styles.qtyCheckedText}>{qtyBadge}</Text>
-                                ) : null}
-                              </View>
-                            </View>
-                            <Pressable
-                              onPress={() => removeGroceryItem(item.id)}
-                              style={styles.editIconBtn}
-                              hitSlop={10}
-                              accessibilityLabel={`Delete ${item.name}`}
-                            >
-                              <Ionicons name="close" size={18} color={colors.textMuted} />
-                            </Pressable>
-                          </Pressable>
-                        </View>
-                      );
-                    })}
-                  </View>
-                </View>
+          }
+          renderSectionHeader={({ section }) => (
+            <View style={styles.sectionHeader}>
+              <View style={styles.sectionTitleWrap}>
+                <Ionicons
+                  name={section.icon}
+                  size={16}
+                  color={section.isCheckedSection ? colors.textMuted : colors.primary}
+                />
+                <Text
+                  style={[
+                    styles.sectionTitle,
+                    section.isCheckedSection && { color: colors.textSecondary },
+                  ]}
+                >
+                  {section.title}
+                </Text>
+              </View>
+              {!section.isCheckedSection ? (
+                <Text style={styles.sectionCount}>{section.data.length}</Text>
               ) : null}
-            </>
+            </View>
           )}
-        </ScrollView>
+          renderItem={({ item, index, section }) => {
+            const isFirst = index === 0;
+            const isLast = index === section.data.length - 1;
+            const qtyBadge = formatQuantityWithUnit(item.quantity, item.unit);
+
+            return (
+              <View
+                style={[
+                  styles.cardSlice,
+                  isFirst && styles.cardFirst,
+                  isLast && styles.cardLast,
+                  section.isCheckedSection && { opacity: 0.85 },
+                ]}
+              >
+                {!isFirst ? <View style={styles.rowDivider} /> : null}
+                <SwipeableRow onDelete={() => handleSwipeDelete(item)}>
+                  <Pressable
+                    onPress={() => handleToggle(item)}
+                    onLongPress={() => {
+                      hapticSelection();
+                      setEditingItem(item);
+                    }}
+                    style={({ pressed }) => [
+                      styles.itemRow,
+                      pressed && styles.itemRowPressed,
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.checkbox,
+                        item.checked && styles.checkboxChecked,
+                      ]}
+                    >
+                      {item.checked ? (
+                        <Ionicons name="checkmark" size={16} color={colors.white} />
+                      ) : null}
+                    </View>
+                    <View style={styles.itemBody}>
+                      <View style={styles.itemTopLine}>
+                        <Text
+                          style={[
+                            styles.itemName,
+                            item.checked && styles.itemNameChecked,
+                          ]}
+                          numberOfLines={2}
+                        >
+                          {item.name}
+                        </Text>
+                        {qtyBadge ? (
+                          item.checked ? (
+                            <Text style={styles.qtyCheckedText}>{qtyBadge}</Text>
+                          ) : (
+                            <View style={styles.qtyPill}>
+                              <Text style={styles.qtyPillText}>{qtyBadge}</Text>
+                            </View>
+                          )
+                        ) : null}
+                      </View>
+                      {!item.checked && item.sourceNote ? (
+                        <Text style={styles.sourceNote} numberOfLines={1}>
+                          {item.sourceNote}
+                        </Text>
+                      ) : null}
+                    </View>
+                    {!item.checked ? (
+                      <Pressable
+                        onPress={() => {
+                          hapticSelection();
+                          setEditingItem(item);
+                        }}
+                        style={styles.editIconBtn}
+                        hitSlop={10}
+                        accessibilityLabel={`Edit ${item.name}`}
+                      >
+                        <Ionicons
+                          name="pencil-outline"
+                          size={16}
+                          color={colors.textMuted}
+                        />
+                      </Pressable>
+                    ) : (
+                      <Pressable
+                        onPress={() => handleSwipeDelete(item)}
+                        style={styles.editIconBtn}
+                        hitSlop={10}
+                        accessibilityLabel={`Delete ${item.name}`}
+                      >
+                        <Ionicons name="close" size={18} color={colors.textMuted} />
+                      </Pressable>
+                    )}
+                  </Pressable>
+                </SwipeableRow>
+              </View>
+            );
+          }}
+          renderSectionFooter={() => <View style={{ height: 16 }} />}
+        />
 
         {/* Sticky Move Checked to Pantry Bar */}
         {checkedItems.length > 0 ? (
@@ -441,6 +568,12 @@ export default function GroceriesScreen() {
             </Pressable>
           </View>
         ) : null}
+
+        <UndoSnackbar
+          message={snackbar?.message ?? null}
+          onUndo={snackbar?.undoItem ? handleUndoDelete : undefined}
+          bottomOffset={checkedItems.length > 0 ? 74 : 14}
+        />
       </KeyboardAvoidingView>
 
       <GroceryEditModal
@@ -460,6 +593,16 @@ const createStyles = (c: ThemeColors) =>
     safe: {
       flex: 1,
       backgroundColor: c.bg,
+    },
+    shareBtn: {
+      width: 40,
+      height: 40,
+      borderRadius: 12,
+      backgroundColor: c.surface,
+      borderWidth: 1,
+      borderColor: c.border,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
     quickAddCard: {
       marginHorizontal: 16,
@@ -502,6 +645,24 @@ const createStyles = (c: ThemeColors) =>
     },
     addBtnDisabled: {
       opacity: 0.4,
+    },
+    suggestionsRow: {
+      paddingTop: 8,
+      gap: 6,
+    },
+    suggestionChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+      backgroundColor: c.primarySoft,
+    },
+    suggestionText: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: c.primaryText,
     },
     quickDetails: {
       marginTop: 10,
@@ -546,29 +707,9 @@ const createStyles = (c: ThemeColors) =>
     aisleChipTextActive: {
       color: c.white,
     },
-    banner: {
-      marginHorizontal: 16,
-      marginBottom: 8,
-      paddingHorizontal: 14,
-      paddingVertical: 10,
-      borderRadius: 12,
-      backgroundColor: c.primarySoft,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-    },
-    bannerText: {
-      fontSize: 13,
-      fontWeight: '600',
-      color: c.primaryText,
-      flex: 1,
-    },
     scrollContent: {
       paddingHorizontal: 16,
-      paddingBottom: 28,
-    },
-    section: {
-      marginBottom: 18,
+      paddingBottom: 32,
     },
     sectionHeader: {
       flexDirection: 'row',
@@ -594,12 +735,22 @@ const createStyles = (c: ThemeColors) =>
       fontWeight: '700',
       color: c.textMuted,
     },
-    sectionCard: {
+    cardSlice: {
       backgroundColor: c.surface,
-      borderRadius: 16,
-      borderWidth: 1,
+      borderLeftWidth: 1,
+      borderRightWidth: 1,
       borderColor: c.border,
       overflow: 'hidden',
+    },
+    cardFirst: {
+      borderTopWidth: 1,
+      borderTopLeftRadius: 16,
+      borderTopRightRadius: 16,
+    },
+    cardLast: {
+      borderBottomWidth: 1,
+      borderBottomLeftRadius: 16,
+      borderBottomRightRadius: 16,
     },
     rowDivider: {
       height: 1,
@@ -613,6 +764,7 @@ const createStyles = (c: ThemeColors) =>
       paddingHorizontal: 14,
       paddingVertical: 12,
       gap: 12,
+      backgroundColor: c.surface,
     },
     itemRowPressed: {
       backgroundColor: c.surfaceAlt,

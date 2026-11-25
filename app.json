@@ -4,7 +4,7 @@
     "slug": "larder",
     "owner": "emilijus",
     "scheme": "larder",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -41,6 +41,25 @@
         {
           "photosPermission": "Allow Larder to pick recipe photos from your photo library.",
           "cameraPermission": "Allow Larder to take photos of your recipes."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Larder to scan pantry product barcodes with your camera."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#4A7C59"
+        }
+      ],
+      [
+        "expo-share-intent",
+        {
+          "disableIOS": true,
+          "androidIntentFilters": ["text/*"]
         }
       ]
     ],

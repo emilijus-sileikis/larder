@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import {
   Alert,
   Image,
+  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,6 +13,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CookModeModal } from '@/components/CookModeModal';
+import { MarkCookedModal } from '@/components/MarkCookedModal';
 import { useLarder } from '@/db/LarderContext';
 import type { ThemeColors } from '@/theme/colors';
 import { hapticSelection, hapticSuccess } from '@/utils/haptics';
@@ -20,8 +22,8 @@ import { formatIngredientLine } from '@/utils/ingredients';
 const MULTIPLIERS = [0.5, 1, 1.5, 2, 3];
 
 export default function RecipeDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
-  const recipeId = Number(id);
+  const { id } = useLocalSearchParams<{ id: string | string[] }>();
+  const recipeId = Number(Array.isArray(id) ? id[0] : id);
   const {
     colors,
     t,
@@ -37,8 +39,12 @@ export default function RecipeDetailScreen() {
     [recipes, recipeId]
   );
 
-  const [multiplier, setMultiplier] = useState(1);
+  // Target servings can be adjusted directly (-/+) OR via multiplier presets (#10)
+  const [targetServingsOverride, setTargetServingsOverride] = useState<number | null>(
+    null
+  );
   const [cookModeOpen, setCookModeOpen] = useState(false);
+  const [markCookedOpen, setMarkCookedOpen] = useState(false);
 
   if (!recipe) {
     return (
@@ -58,9 +64,15 @@ export default function RecipeDetailScreen() {
     );
   }
 
+  const baseServings = Math.max(1, recipe.servings);
+  const targetServings = targetServingsOverride ?? baseServings;
+  const multiplier = targetServings / baseServings;
+  const displayServings = Math.round(targetServings * 10) / 10;
+
   const match = recipeMatchMap[recipe.id];
-  const scaledServings = Math.round(recipe.servings * multiplier * 10) / 10;
-  const missingCount = match ? match.totalCount - match.onHandCount : recipe.ingredients.length;
+  const missingCount = match
+    ? match.totalCount - match.onHandCount
+    : recipe.ingredients.length;
 
   const handleAddMissing = async () => {
     const res = await addMissingRecipeIngredientsToGroceries(recipe, multiplier);
@@ -93,6 +105,15 @@ export default function RecipeDetailScreen() {
     ]);
   };
 
+  const handleOpenSource = async () => {
+    if (!recipe.sourceUrl) return;
+    try {
+      await Linking.openURL(recipe.sourceUrl);
+    } catch {
+      // Ignore malformed url
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.topBar}>
@@ -104,6 +125,16 @@ export default function RecipeDetailScreen() {
           <Ionicons name="arrow-back" size={20} color={colors.text} />
         </Pressable>
         <View style={styles.topActions}>
+          <Pressable
+            onPress={() => {
+              hapticSelection();
+              setMarkCookedOpen(true);
+            }}
+            style={styles.cookedChip}
+          >
+            <Ionicons name="checkmark-done-outline" size={16} color={colors.primaryText} />
+            <Text style={styles.cookedChipText}>{t.markCookedBtn}</Text>
+          </Pressable>
           <Pressable
             onPress={() => {
               hapticSelection();
@@ -134,6 +165,15 @@ export default function RecipeDetailScreen() {
           <Text style={styles.description}>{recipe.description}</Text>
         ) : null}
 
+        {recipe.sourceUrl ? (
+          <Pressable onPress={handleOpenSource} style={styles.sourceLink}>
+            <Ionicons name="open-outline" size={14} color={colors.primary} />
+            <Text style={styles.sourceLinkText} numberOfLines={1}>
+              {t.openSourceBtn}
+            </Text>
+          </Pressable>
+        ) : null}
+
         {/* Meta pills */}
         <View style={styles.metaRow}>
           <View style={styles.metaPill}>
@@ -146,7 +186,7 @@ export default function RecipeDetailScreen() {
           </View>
           <View style={styles.metaPill}>
             <Ionicons name="people-outline" size={14} color={colors.textSecondary} />
-            <Text style={styles.metaText}>{t.servingsWord(scaledServings)}</Text>
+            <Text style={styles.metaText}>{t.servingsWord(displayServings)}</Text>
           </View>
         </View>
 
@@ -182,7 +222,7 @@ export default function RecipeDetailScreen() {
           </Pressable>
         </View>
 
-        {/* Servings Multiplier */}
+        {/* Ingredients + Exact Servings Stepper (#10) + Multiplier Presets */}
         <View style={styles.card}>
           <View style={styles.cardHeader}>
             <Text style={styles.sectionTitle}>{t.ingredientsHeading}</Text>
@@ -193,15 +233,40 @@ export default function RecipeDetailScreen() {
             ) : null}
           </View>
 
+          <View style={styles.servingsControlRow}>
+            <Text style={styles.servingsLabel}>{t.targetServingsLabel}</Text>
+            <View style={styles.stepper}>
+              <Pressable
+                onPress={() => {
+                  hapticSelection();
+                  setTargetServingsOverride(Math.max(1, Math.round(targetServings) - 1));
+                }}
+                style={styles.stepBtn}
+              >
+                <Ionicons name="remove" size={17} color={colors.text} />
+              </Pressable>
+              <Text style={styles.servingsValue}>{displayServings}</Text>
+              <Pressable
+                onPress={() => {
+                  hapticSelection();
+                  setTargetServingsOverride(Math.min(30, Math.round(targetServings) + 1));
+                }}
+                style={styles.stepBtn}
+              >
+                <Ionicons name="add" size={17} color={colors.text} />
+              </Pressable>
+            </View>
+          </View>
+
           <View style={styles.multiplierBar}>
             {MULTIPLIERS.map((m) => {
-              const active = multiplier === m;
+              const active = Math.abs(multiplier - m) < 0.01;
               return (
                 <Pressable
                   key={m}
                   onPress={() => {
                     hapticSelection();
-                    setMultiplier(m);
+                    setTargetServingsOverride(Math.round(baseServings * m * 10) / 10);
                   }}
                   style={[styles.multPill, active && styles.multPillActive]}
                 >
@@ -249,7 +314,12 @@ export default function RecipeDetailScreen() {
                     <Text style={styles.ingText}>
                       {formatIngredientLine(ing.name, scaledQty, ing.unit)}
                     </Text>
-                    <Text style={[styles.statusTag, { color: status === 'missing' ? colors.textMuted : statusColor }]}>
+                    <Text
+                      style={[
+                        styles.statusTag,
+                        { color: status === 'missing' ? colors.textMuted : statusColor },
+                      ]}
+                    >
                       {statusLabel}
                     </Text>
                   </View>
@@ -284,6 +354,12 @@ export default function RecipeDetailScreen() {
         recipe={recipe}
         scaleMultiplier={multiplier}
         onClose={() => setCookModeOpen(false)}
+        onMarkCooked={() => setMarkCookedOpen(true)}
+      />
+      <MarkCookedModal
+        visible={markCookedOpen}
+        recipe={recipe}
+        onClose={() => setMarkCookedOpen(false)}
       />
     </SafeAreaView>
   );
@@ -304,7 +380,22 @@ const createStyles = (c: ThemeColors) =>
     },
     topActions: {
       flexDirection: 'row',
+      alignItems: 'center',
       gap: 8,
+    },
+    cookedChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      height: 40,
+      paddingHorizontal: 12,
+      borderRadius: 12,
+      backgroundColor: c.primarySoft,
+    },
+    cookedChipText: {
+      fontSize: 13,
+      fontWeight: '700',
+      color: c.primaryText,
     },
     iconBtn: {
       width: 40,
@@ -338,6 +429,22 @@ const createStyles = (c: ThemeColors) =>
       fontSize: 15,
       lineHeight: 22,
       color: c.textSecondary,
+    },
+    sourceLink: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      alignSelf: 'flex-start',
+      gap: 6,
+      marginTop: 10,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+      backgroundColor: c.primarySoft,
+    },
+    sourceLinkText: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: c.primaryText,
     },
     metaRow: {
       flexDirection: 'row',
@@ -437,6 +544,37 @@ const createStyles = (c: ThemeColors) =>
       fontSize: 12,
       fontWeight: '700',
       color: c.primaryText,
+    },
+    servingsControlRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 10,
+    },
+    servingsLabel: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: c.textSecondary,
+    },
+    stepper: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    stepBtn: {
+      width: 32,
+      height: 32,
+      borderRadius: 9,
+      backgroundColor: c.surfaceAlt,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    servingsValue: {
+      fontSize: 15,
+      fontWeight: '700',
+      color: c.text,
+      minWidth: 26,
+      textAlign: 'center',
     },
     multiplierBar: {
       flexDirection: 'row',

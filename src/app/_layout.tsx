@@ -1,9 +1,40 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
-import { Stack } from 'expo-router';
+import Constants from 'expo-constants';
+import { router, Stack } from 'expo-router';
+import { ShareIntentProvider, useShareIntentContext } from 'expo-share-intent';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { LarderProvider, useLarder } from '@/db/LarderContext';
+
+const isExpoGo = Constants.appOwnership === 'expo';
+
+function extractUrlFromText(text: string): string | undefined {
+  const match = text.match(/https?:\/\/[^\s"'<>]+/i);
+  return match ? match[0] : undefined;
+}
+
+function ShareIntentBridge() {
+  const { hasShareIntent, shareIntent, resetShareIntent } = useShareIntentContext();
+  const { setSharedRecipePayload } = useLarder();
+
+  useEffect(() => {
+    if (!hasShareIntent) return;
+    const rawUrl = shareIntent.webUrl ?? (shareIntent.text ? extractUrlFromText(shareIntent.text) : undefined);
+    const rawText = shareIntent.text?.trim() || undefined;
+
+    if (rawUrl || rawText) {
+      setSharedRecipePayload({
+        url: rawUrl,
+        text: rawUrl ? undefined : rawText,
+      });
+      router.replace('/(tabs)/recipes');
+    }
+    resetShareIntent();
+  }, [hasShareIntent, shareIntent, resetShareIntent, setSharedRecipePayload]);
+
+  return null;
+}
 
 function AppShell() {
   const { ready, error, resolvedTheme, colors, t } = useLarder();
@@ -36,6 +67,7 @@ function AppShell() {
 
   return (
     <>
+      <ShareIntentBridge />
       <StatusBar style={resolvedTheme === 'dark' ? 'light' : 'dark'} />
       <Stack
         screenOptions={{
@@ -56,11 +88,13 @@ function AppShell() {
 
 export default function RootLayout() {
   return (
-    <SafeAreaProvider>
-      <LarderProvider>
-        <AppShell />
-      </LarderProvider>
-    </SafeAreaProvider>
+    <ShareIntentProvider options={{ disabled: isExpoGo, resetOnBackground: true }}>
+      <SafeAreaProvider>
+        <LarderProvider>
+          <AppShell />
+        </LarderProvider>
+      </SafeAreaProvider>
+    </ShareIntentProvider>
   );
 }
 

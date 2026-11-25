@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
+  FlatList,
   Image,
   Pressable,
   ScrollView,
@@ -21,15 +22,25 @@ import type { RecipeInput } from '@/types/larder';
 import { hapticSelection } from '@/utils/haptics';
 
 type SortMode = 'recent' | 'match';
+type SmartFilter = 'none' | 'cook_now' | 'use_expiring';
 
 export default function RecipesScreen() {
-  const { colors, t, recipes, recipeMatchMap, setPendingImportedRecipe } = useLarder();
+  const {
+    colors,
+    t,
+    recipes,
+    recipeMatchMap,
+    setPendingImportedRecipe,
+    sharedRecipePayload,
+    setSharedRecipePayload,
+  } = useLarder();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const [smartFilter, setSmartFilter] = useState<SmartFilter>('none');
   const [sortBy, setSortBy] = useState<SortMode>('recent');
 
   const allTags = useMemo(() => {
@@ -48,6 +59,13 @@ export default function RecipesScreen() {
     const q = query.trim().toLowerCase();
     const list = recipes.filter((r) => {
       if (selectedTag && !r.tags.includes(selectedTag)) return false;
+      const match = recipeMatchMap[r.id];
+      if (smartFilter === 'cook_now' && !(match && match.totalCount > 0 && match.ratio >= 0.8)) {
+        return false;
+      }
+      if (smartFilter === 'use_expiring' && !(match && match.usesExpiringCount > 0)) {
+        return false;
+      }
       if (!q) return true;
       return (
         r.title.toLowerCase().includes(q) ||
@@ -57,6 +75,15 @@ export default function RecipesScreen() {
       );
     });
 
+    if (smartFilter === 'use_expiring') {
+      return [...list].sort((a, b) => {
+        const ea = recipeMatchMap[a.id]?.usesExpiringCount ?? 0;
+        const eb = recipeMatchMap[b.id]?.usesExpiringCount ?? 0;
+        if (eb !== ea) return eb - ea;
+        return (recipeMatchMap[b.id]?.ratio ?? 0) - (recipeMatchMap[a.id]?.ratio ?? 0);
+      });
+    }
+
     if (sortBy === 'match') {
       return [...list].sort((a, b) => {
         const ma = recipeMatchMap[a.id]?.ratio ?? 0;
@@ -65,10 +92,18 @@ export default function RecipesScreen() {
       });
     }
     return list;
-  }, [recipes, query, selectedTag, sortBy, recipeMatchMap]);
+  }, [recipes, query, selectedTag, smartFilter, sortBy, recipeMatchMap]);
+
+  const isImportModalVisible = importOpen || sharedRecipePayload !== null;
+
+  const handleCloseImport = () => {
+    setImportOpen(false);
+    if (sharedRecipePayload) setSharedRecipePayload(null);
+  };
 
   const handleImported = (draft: RecipeInput) => {
     setPendingImportedRecipe(draft);
+    if (sharedRecipePayload) setSharedRecipePayload(null);
     router.push('/recipe/editor');
   };
 
@@ -152,49 +187,111 @@ export default function RecipesScreen() {
         </Pressable>
       </View>
 
-      {/* Tag filters */}
-      {allTags.length > 0 ? (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.tagsBar}
-          style={styles.tagsScroll}
+      {/* Smart filters (#6) + Tag filters */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.tagsBar}
+        style={styles.tagsScroll}
+      >
+        <Pressable
+          onPress={() => {
+            hapticSelection();
+            setSmartFilter('none');
+            setSelectedTag(null);
+          }}
+          style={[
+            styles.tagChip,
+            selectedTag === null && smartFilter === 'none' && styles.tagChipActive,
+          ]}
         >
-          <Pressable
-            onPress={() => {
-              hapticSelection();
-              setSelectedTag(null);
-            }}
-            style={[styles.tagChip, selectedTag === null && styles.tagChipActive]}
+          <Text
+            style={[
+              styles.tagText,
+              selectedTag === null && smartFilter === 'none' && styles.tagTextActive,
+            ]}
           >
-            <Text
-              style={[styles.tagText, selectedTag === null && styles.tagTextActive]}
-            >
-              {t.all}
-            </Text>
-          </Pressable>
-          {allTags.map((tag) => {
-            const active = selectedTag === tag;
-            return (
-              <Pressable
-                key={tag}
-                onPress={() => {
-                  hapticSelection();
-                  setSelectedTag(active ? null : tag);
-                }}
-                style={[styles.tagChip, active && styles.tagChipActive]}
-              >
-                <Text style={[styles.tagText, active && styles.tagTextActive]}>
-                  {tag}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-      ) : null}
+            {t.all}
+          </Text>
+        </Pressable>
 
-      <ScrollView contentContainerStyle={styles.listContent}>
-        {filteredRecipes.length === 0 ? (
+        <Pressable
+          onPress={() => {
+            hapticSelection();
+            setSmartFilter((cur) => (cur === 'use_expiring' ? 'none' : 'use_expiring'));
+          }}
+          style={[
+            styles.tagChip,
+            smartFilter === 'use_expiring' && {
+              backgroundColor: colors.warning,
+              borderColor: colors.warning,
+            },
+          ]}
+        >
+          <Ionicons
+            name="flame-outline"
+            size={13}
+            color={smartFilter === 'use_expiring' ? colors.white : colors.warning}
+          />
+          <Text
+            style={[
+              styles.tagText,
+              smartFilter === 'use_expiring' && styles.tagTextActive,
+            ]}
+          >
+            {t.filterUseExpiring}
+          </Text>
+        </Pressable>
+
+        <Pressable
+          onPress={() => {
+            hapticSelection();
+            setSmartFilter((cur) => (cur === 'cook_now' ? 'none' : 'cook_now'));
+          }}
+          style={[
+            styles.tagChip,
+            smartFilter === 'cook_now' && styles.tagChipActive,
+          ]}
+        >
+          <Ionicons
+            name="checkmark-done-outline"
+            size={13}
+            color={smartFilter === 'cook_now' ? colors.white : colors.primary}
+          />
+          <Text
+            style={[
+              styles.tagText,
+              smartFilter === 'cook_now' && styles.tagTextActive,
+            ]}
+          >
+            {t.filterCookNow}
+          </Text>
+        </Pressable>
+
+        {allTags.map((tag) => {
+          const active = selectedTag === tag;
+          return (
+            <Pressable
+              key={tag}
+              onPress={() => {
+                hapticSelection();
+                setSelectedTag(active ? null : tag);
+              }}
+              style={[styles.tagChip, active && styles.tagChipActive]}
+            >
+              <Text style={[styles.tagText, active && styles.tagTextActive]}>
+                {tag}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+
+      <FlatList
+        data={filteredRecipes}
+        keyExtractor={(item) => String(item.id)}
+        contentContainerStyle={styles.listContent}
+        ListEmptyComponent={
           <EmptyState
             icon="book-outline"
             title={recipes.length === 0 ? t.recipesEmptyTitle : t.recipesNoMatchTitle}
@@ -209,116 +306,126 @@ export default function RecipesScreen() {
               } else {
                 setQuery('');
                 setSelectedTag(null);
+                setSmartFilter('none');
               }
             }}
           />
-        ) : (
-          filteredRecipes.map((recipe) => {
-            const match = recipeMatchMap[recipe.id];
-            const totalMin = recipe.prepMinutes + recipe.cookMinutes;
-            const highMatch = match && match.totalCount > 0 && match.ratio >= 0.75;
-            const midMatch =
-              match && match.totalCount > 0 && match.ratio >= 0.4 && match.ratio < 0.75;
+        }
+        renderItem={({ item: recipe }) => {
+          const match = recipeMatchMap[recipe.id];
+          const totalMin = recipe.prepMinutes + recipe.cookMinutes;
+          const highMatch = match && match.totalCount > 0 && match.ratio >= 0.75;
+          const midMatch =
+            match && match.totalCount > 0 && match.ratio >= 0.4 && match.ratio < 0.75;
 
-            return (
-              <Pressable
-                key={recipe.id}
-                onPress={() => {
-                  hapticSelection();
-                  router.push(`/recipe/${recipe.id}`);
-                }}
-                style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
-              >
-                {recipe.photoUri ? (
-                  <Image source={{ uri: recipe.photoUri }} style={styles.cardPhoto} />
-                ) : null}
-                <View style={styles.cardBody}>
-                  <View style={styles.cardHeaderRow}>
-                    <Text style={styles.cardTitle} numberOfLines={2}>
-                      {recipe.title}
-                    </Text>
-                    {match && match.totalCount > 0 ? (
-                      <View
-                        style={[
-                          styles.matchBadge,
+          return (
+            <Pressable
+              onPress={() => {
+                hapticSelection();
+                router.push(`/recipe/${recipe.id}`);
+              }}
+              style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
+            >
+              {recipe.photoUri ? (
+                <Image source={{ uri: recipe.photoUri }} style={styles.cardPhoto} />
+              ) : null}
+              <View style={styles.cardBody}>
+                <View style={styles.cardHeaderRow}>
+                  <Text style={styles.cardTitle} numberOfLines={2}>
+                    {recipe.title}
+                  </Text>
+                  {match && match.totalCount > 0 ? (
+                    <View
+                      style={[
+                        styles.matchBadge,
+                        highMatch
+                          ? { backgroundColor: colors.primarySoft }
+                          : midMatch
+                            ? { backgroundColor: colors.warningSoft }
+                            : { backgroundColor: colors.surfaceAlt },
+                      ]}
+                    >
+                      <Ionicons
+                        name={highMatch ? 'checkmark-circle' : 'cube-outline'}
+                        size={13}
+                        color={
                           highMatch
-                            ? { backgroundColor: colors.primarySoft }
+                            ? colors.primary
                             : midMatch
-                              ? { backgroundColor: colors.warningSoft }
-                              : { backgroundColor: colors.surfaceAlt },
-                        ]}
-                      >
-                        <Ionicons
-                          name={highMatch ? 'checkmark-circle' : 'cube-outline'}
-                          size={13}
-                          color={
-                            highMatch
-                              ? colors.primary
+                              ? colors.warning
+                              : colors.textSecondary
+                        }
+                      />
+                      <Text
+                        style={[
+                          styles.matchText,
+                          {
+                            color: highMatch
+                              ? colors.primaryText
                               : midMatch
                                 ? colors.warning
-                                : colors.textSecondary
-                          }
-                        />
-                        <Text
-                          style={[
-                            styles.matchText,
-                            {
-                              color: highMatch
-                                ? colors.primaryText
-                                : midMatch
-                                  ? colors.warning
-                                  : colors.textSecondary,
-                            },
-                          ]}
-                        >
-                          {t.onHandBadge(match.onHandCount, match.totalCount)}
-                        </Text>
-                      </View>
-                    ) : null}
-                  </View>
-
-                  {recipe.description ? (
-                    <Text style={styles.cardDesc} numberOfLines={2}>
-                      {recipe.description}
-                    </Text>
-                  ) : null}
-
-                  <View style={styles.metaRow}>
-                    <View style={styles.metaItem}>
-                      <Ionicons name="time-outline" size={14} color={colors.textMuted} />
-                      <Text style={styles.metaText}>{t.minutesShort(totalMin)}</Text>
-                    </View>
-                    <View style={styles.metaItem}>
-                      <Ionicons name="people-outline" size={14} color={colors.textMuted} />
-                      <Text style={styles.metaText}>{t.servingsWord(recipe.servings)}</Text>
-                    </View>
-                    <View style={styles.metaItem}>
-                      <Ionicons name="list-outline" size={14} color={colors.textMuted} />
-                      <Text style={styles.metaText}>
-                        {t.ingredientsWord(recipe.ingredients.length)}
+                                : colors.textSecondary,
+                          },
+                        ]}
+                      >
+                        {t.onHandBadge(match.onHandCount, match.totalCount)}
                       </Text>
-                    </View>
-                  </View>
-
-                  {recipe.tags.length > 0 ? (
-                    <View style={styles.cardTags}>
-                      {recipe.tags.slice(0, 4).map((tagItem) => (
-                        <View key={tagItem} style={styles.cardTagPill}>
-                          <Text style={styles.cardTagText}>{tagItem}</Text>
-                        </View>
-                      ))}
                     </View>
                   ) : null}
                 </View>
-              </Pressable>
-            );
-          })
-        )}
-      </ScrollView>
+
+                {match && match.usesExpiringCount > 0 ? (
+                  <View style={styles.expiringHintBadge}>
+                    <Ionicons name="alert-circle" size={12} color={colors.warning} />
+                    <Text style={styles.expiringHintText}>
+                      {t.usesExpiringBadge(match.usesExpiringCount)}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {recipe.description ? (
+                  <Text style={styles.cardDesc} numberOfLines={2}>
+                    {recipe.description}
+                  </Text>
+                ) : null}
+
+                <View style={styles.metaRow}>
+                  <View style={styles.metaItem}>
+                    <Ionicons name="time-outline" size={14} color={colors.textMuted} />
+                    <Text style={styles.metaText}>{t.minutesShort(totalMin)}</Text>
+                  </View>
+                  <View style={styles.metaItem}>
+                    <Ionicons name="people-outline" size={14} color={colors.textMuted} />
+                    <Text style={styles.metaText}>{t.servingsWord(recipe.servings)}</Text>
+                  </View>
+                  <View style={styles.metaItem}>
+                    <Ionicons name="list-outline" size={14} color={colors.textMuted} />
+                    <Text style={styles.metaText}>
+                      {t.ingredientsWord(recipe.ingredients.length)}
+                    </Text>
+                  </View>
+                </View>
+
+                {recipe.tags.length > 0 ? (
+                  <View style={styles.cardTags}>
+                    {recipe.tags.slice(0, 4).map((tagItem) => (
+                      <View key={tagItem} style={styles.cardTagPill}>
+                        <Text style={styles.cardTagText}>{tagItem}</Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+              </View>
+            </Pressable>
+          );
+        }}
+      />
 
       <ImportRecipeModal
-        visible={importOpen}
-        onClose={() => setImportOpen(false)}
+        visible={isImportModalVisible}
+        initialUrl={sharedRecipePayload?.url}
+        initialText={sharedRecipePayload?.text}
+        onClose={handleCloseImport}
         onImported={handleImported}
       />
       <SettingsModal visible={settingsOpen} onClose={() => setSettingsOpen(false)} />
@@ -414,6 +521,9 @@ const createStyles = (c: ThemeColors) =>
       gap: 7,
     },
     tagChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
       paddingHorizontal: 13,
       paddingVertical: 7,
       borderRadius: 999,
@@ -481,6 +591,22 @@ const createStyles = (c: ThemeColors) =>
     matchText: {
       fontSize: 11,
       fontWeight: '700',
+    },
+    expiringHintBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      alignSelf: 'flex-start',
+      gap: 4,
+      marginTop: 6,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: 999,
+      backgroundColor: c.warningSoft,
+    },
+    expiringHintText: {
+      fontSize: 11,
+      fontWeight: '700',
+      color: c.warning,
     },
     cardDesc: {
       marginTop: 5,

@@ -360,7 +360,51 @@ export interface ParsedWebRecipe {
   imageUrl: string | null;
 }
 
-export function extractRecipeFromHtml(html: string): ParsedWebRecipe {
+function tryParseJsonLd(raw: string): unknown | null {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    try {
+      // Handle trailing commas and stray control chars common on blog plugins
+      const cleaned = raw
+        .replace(/[\u0000-\u001F]+/g, ' ')
+        .replace(/,\s*([}\]])/g, '$1');
+      return JSON.parse(cleaned);
+    } catch {
+      return null;
+    }
+  }
+}
+
+function extractListItemsAfterHeading(
+  html: string,
+  headingPattern: RegExp
+): string[] {
+  const headingRe = /<h[1-5][^>]*>([\s\S]*?)<\/h[1-5]>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = headingRe.exec(html)) !== null) {
+    const headingText = decodeHtmlEntities(m[1]);
+    if (!headingPattern.test(headingText)) continue;
+    const after = html.slice(m.index + m[0].length, m.index + m[0].length + 6000);
+    const listMatch = after.match(/<(?:ul|ol)[^>]*>([\s\S]*?)<\/(?:ul|ol)>/i);
+    if (listMatch) {
+      const items: string[] = [];
+      const liRe = /<li[^>]*>([\s\S]*?)<\/li>/gi;
+      let li: RegExpExecArray | null;
+      while ((li = liRe.exec(listMatch[1])) !== null) {
+        const clean = decodeHtmlEntities(li[1]);
+        if (clean.length > 1) items.push(clean);
+      }
+      if (items.length > 0) return items;
+    }
+  }
+  return [];
+}
+
+export function extractRecipeFromHtml(
+  html: string,
+  sourceUrl: string | null = null
+): ParsedWebRecipe {
   // 1. Try Schema.org JSON-LD scripts
   const scriptRegex =
     /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
@@ -368,62 +412,60 @@ export function extractRecipeFromHtml(html: string): ParsedWebRecipe {
   while ((match = scriptRegex.exec(html)) !== null) {
     const body = match[1].trim();
     if (!body) continue;
-    try {
-      const parsed = JSON.parse(body);
-      const node = findRecipeJsonLdNode(parsed);
-      if (!node) continue;
+    const parsed = tryParseJsonLd(body);
+    if (!parsed) continue;
+    const node = findRecipeJsonLdNode(parsed);
+    if (!node) continue;
 
-      const title =
-        typeof node.name === 'string' && node.name.trim()
-          ? decodeHtmlEntities(node.name)
-          : extractMetaContent(html, 'og:title') ?? 'Imported Recipe';
-      const description =
-        typeof node.description === 'string'
-          ? decodeHtmlEntities(node.description).slice(0, 260)
-          : '';
-      const servings = parseServings(node.recipeYield);
-      const prepMinutes = parseIsoDurationToMinutes(node.prepTime);
-      let cookMinutes = parseIsoDurationToMinutes(node.cookTime);
-      const totalMinutes = parseIsoDurationToMinutes(node.totalTime);
-      if (prepMinutes === 0 && cookMinutes === 0 && totalMinutes > 0) {
-        cookMinutes = totalMinutes;
-      }
+    const title =
+      typeof node.name === 'string' && node.name.trim()
+        ? decodeHtmlEntities(node.name)
+        : extractMetaContent(html, 'og:title') ?? 'Imported Recipe';
+    const description =
+      typeof node.description === 'string'
+        ? decodeHtmlEntities(node.description).slice(0, 260)
+        : '';
+    const servings = parseServings(node.recipeYield);
+    const prepMinutes = parseIsoDurationToMinutes(node.prepTime);
+    let cookMinutes = parseIsoDurationToMinutes(node.cookTime);
+    const totalMinutes = parseIsoDurationToMinutes(node.totalTime);
+    if (prepMinutes === 0 && cookMinutes === 0 && totalMinutes > 0) {
+      cookMinutes = totalMinutes;
+    }
 
-      const rawIngredients = Array.isArray(node.recipeIngredient)
-        ? node.recipeIngredient
-        : Array.isArray(node.ingredients)
-          ? node.ingredients
-          : [];
-      const ingredients = rawIngredients
-        .filter((i): i is string => typeof i === 'string')
-        .map(parseRecipeIngredientLine)
-        .filter((i): i is RecipeIngredientInput => i !== null);
+    const rawIngredients = Array.isArray(node.recipeIngredient)
+      ? node.recipeIngredient
+      : Array.isArray(node.ingredients)
+        ? node.ingredients
+        : [];
+    const ingredients = rawIngredients
+      .filter((i): i is string => typeof i === 'string')
+      .map(parseRecipeIngredientLine)
+      .filter((i): i is RecipeIngredientInput => i !== null);
 
-      const steps = extractInstructions(node.recipeInstructions);
-      const imageUrl =
-        extractImageUrl(node.image) ?? extractMetaContent(html, 'og:image');
+    const steps = extractInstructions(node.recipeInstructions);
+    const imageUrl =
+      extractImageUrl(node.image) ?? extractMetaContent(html, 'og:image');
 
-      if (ingredients.length > 0 || steps.length > 0) {
-        return {
-          recipe: {
-            title,
-            description,
-            servings,
-            prepMinutes: prepMinutes || 10,
-            cookMinutes: cookMinutes || 15,
-            photoUri: null,
-            tags: extractTags(node),
-            ingredients:
-              ingredients.length > 0
-                ? ingredients
-                : [{ name: 'Add ingredients', quantity: null, unit: '', category: 'pantry_dry' }],
-            steps,
-          },
-          imageUrl,
-        };
-      }
-    } catch {
-      // Ignore malformed JSON-LD blocks and continue
+    if (ingredients.length > 0 || steps.length > 0) {
+      return {
+        recipe: {
+          title,
+          description,
+          servings,
+          prepMinutes: prepMinutes || 10,
+          cookMinutes: cookMinutes || 15,
+          photoUri: null,
+          sourceUrl,
+          tags: extractTags(node),
+          ingredients:
+            ingredients.length > 0
+              ? ingredients
+              : [{ name: 'Add ingredients', quantity: null, unit: '', category: 'pantry_dry' }],
+          steps,
+        },
+        imageUrl,
+      };
     }
   }
 
@@ -438,10 +480,18 @@ export function extractRecipeFromHtml(html: string): ParsedWebRecipe {
 
   const microSteps: string[] = [];
   const stepRe =
-    /<[^>]+itemprop=["']recipeInstructions["'][^>]*>([\s\S]*?)<\/[^>]+>/gi;
+    /<([a-z0-9]+)[^>]+itemprop=["'](?:recipeInstructions|step)["'][^>]*>([\s\S]*?)<\/\1>/gi;
   while ((match = stepRe.exec(html)) !== null) {
-    const text = decodeHtmlEntities(match[1]);
-    if (text.length > 3) microSteps.push(text);
+    const block = match[2];
+    const nestedLi = Array.from(block.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi))
+      .map((m) => decodeHtmlEntities(m[1]))
+      .filter((s) => s.length > 3);
+    if (nestedLi.length > 0) {
+      microSteps.push(...nestedLi);
+    } else {
+      const text = decodeHtmlEntities(block);
+      if (text.length > 3) microSteps.push(text);
+    }
   }
 
   if (microIngredients.length > 0 || microSteps.length > 0) {
@@ -460,9 +510,53 @@ export function extractRecipeFromHtml(html: string): ParsedWebRecipe {
         prepMinutes: 10,
         cookMinutes: 15,
         photoUri: null,
+        sourceUrl,
         tags: [],
         ingredients: microIngredients,
         steps: microSteps,
+      },
+      imageUrl,
+    };
+  }
+
+  // 3. Readability / HTML heading + list heuristic fallback (for blogs without Schema.org)
+  const strippedHtml = html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ');
+  const heuristicIngLines = extractListItemsAfterHeading(
+    strippedHtml,
+    /(?:ingredients|reikės|ingredientai|produktai|sudėtis)/i
+  );
+  const heuristicStepLines = extractListItemsAfterHeading(
+    strippedHtml,
+    /(?:instructions|directions|method|steps|preparation|gaminimas|paruošimas|eiga)/i
+  );
+
+  if (heuristicIngLines.length > 0 || heuristicStepLines.length > 0) {
+    const titleTagMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    const h1Match = strippedHtml.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
+    const title =
+      extractMetaContent(html, 'og:title') ??
+      (h1Match ? decodeHtmlEntities(h1Match[1]) : null) ??
+      (titleTagMatch ? decodeHtmlEntities(titleTagMatch[1]) : 'Imported Recipe');
+    const description = (extractMetaContent(html, 'og:description') ?? '').slice(0, 260);
+    const imageUrl = extractMetaContent(html, 'og:image');
+    const ingredients = heuristicIngLines
+      .map(parseRecipeIngredientLine)
+      .filter((i): i is RecipeIngredientInput => i !== null);
+
+    return {
+      recipe: {
+        title,
+        description,
+        servings: 2,
+        prepMinutes: 10,
+        cookMinutes: 15,
+        photoUri: null,
+        sourceUrl,
+        tags: [],
+        ingredients,
+        steps: heuristicStepLines,
       },
       imageUrl,
     };

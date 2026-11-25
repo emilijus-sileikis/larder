@@ -25,6 +25,7 @@ import {
   PANTRY_LOCATION_LABELS,
   STOCK_LEVEL_LABELS,
 } from '@/i18n/translations';
+import type { BarcodeLookupResult } from '@/services/barcodeService';
 import type { ThemeColors } from '@/theme/colors';
 import type {
   GroceryCategory,
@@ -40,6 +41,7 @@ interface PantryItemModalProps {
   visible: boolean;
   editingItem: PantryItem | null;
   defaultLocation?: PantryLocation;
+  scannedPrefill?: BarcodeLookupResult | null;
   onClose: () => void;
   onSave: (input: PantryItemInput, editingId?: number) => Promise<void>;
   onDelete?: (id: number) => Promise<void>;
@@ -48,37 +50,59 @@ interface PantryItemModalProps {
 function PantryItemForm({
   editingItem,
   defaultLocation,
+  scannedPrefill,
   onClose,
   onSave,
   onDelete,
 }: {
   editingItem: PantryItem | null;
   defaultLocation: PantryLocation;
+  scannedPrefill?: BarcodeLookupResult | null;
   onClose: () => void;
   onSave: PantryItemModalProps['onSave'];
   onDelete?: PantryItemModalProps['onDelete'];
 }) {
-  const { colors, language, t } = useLarder();
+  const { colors, language, t, stapleHistory, saveBarcodeMapping } = useLarder();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
-  const [name, setName] = useState(editingItem?.name ?? '');
-  const [location, setLocation] = useState<PantryLocation>(
-    editingItem?.location ?? defaultLocation
-  );
+  const initialLocation =
+    editingItem?.location ?? scannedPrefill?.location ?? defaultLocation;
+  const initialCategory =
+    editingItem?.category ??
+    scannedPrefill?.category ??
+    PANTRY_LOCATION_MAP[defaultLocation].defaultGroceryCategory;
+
+  const [name, setName] = useState(editingItem?.name ?? scannedPrefill?.name ?? '');
+  const [location, setLocation] = useState<PantryLocation>(initialLocation);
   const [stockLevel, setStockLevel] = useState<StockLevel>(
     editingItem?.stockLevel ?? 'in_stock'
   );
-  const [qtyText, setQtyText] = useState(
-    editingItem && editingItem.quantity !== null ? String(editingItem.quantity) : ''
-  );
-  const [unit, setUnit] = useState(editingItem?.unit ?? '');
-  const [category, setCategory] = useState<GroceryCategory>(
-    editingItem?.category ?? PANTRY_LOCATION_MAP[defaultLocation].defaultGroceryCategory
-  );
+  const [qtyText, setQtyText] = useState(() => {
+    if (editingItem && editingItem.quantity !== null) return String(editingItem.quantity);
+    if (scannedPrefill && scannedPrefill.quantity !== null) {
+      return String(scannedPrefill.quantity);
+    }
+    return '';
+  });
+  const [unit, setUnit] = useState(editingItem?.unit ?? scannedPrefill?.unit ?? '');
+  const [category, setCategory] = useState<GroceryCategory>(initialCategory);
   const [expiresAt, setExpiresAt] = useState(editingItem?.expiresAt ?? '');
   const [notes, setNotes] = useState(editingItem?.notes ?? '');
   const [saving, setSaving] = useState(false);
+
+  const suggestions = useMemo(() => {
+    if (editingItem) return [];
+    const q = name.trim().toLowerCase();
+    if (!q) return [];
+    return stapleHistory
+      .filter(
+        (h) =>
+          h.name.toLowerCase().includes(q) &&
+          h.name.toLowerCase() !== q
+      )
+      .slice(0, 4);
+  }, [editingItem, name, stapleHistory]);
 
   const handleSave = async () => {
     const trimmed = name.trim();
@@ -118,6 +142,15 @@ function PantryItemForm({
         },
         editingItem?.id
       );
+      if (scannedPrefill?.barcode) {
+        await saveBarcodeMapping({
+          barcode: scannedPrefill.barcode,
+          name: trimmed,
+          category,
+          location,
+          unit: unit.trim(),
+        });
+      }
       hapticSuccess();
       onClose();
     } catch (e) {
@@ -170,6 +203,19 @@ function PantryItemForm({
           { paddingBottom: Math.max(insets.bottom, 24) },
         ]}
       >
+        {scannedPrefill ? (
+          <View style={styles.barcodeNotice}>
+            <Ionicons name="barcode-outline" size={17} color={colors.primary} />
+            <Text style={styles.barcodeNoticeText}>
+              {scannedPrefill.source === 'local'
+                ? t.barcodeMatchedLocal(scannedPrefill.barcode)
+                : scannedPrefill.source === 'openfoodfacts'
+                  ? t.barcodeMatchedOnline(scannedPrefill.barcode)
+                  : t.barcodeNewPrompt(scannedPrefill.barcode)}
+            </Text>
+          </View>
+        ) : null}
+
         <Text style={styles.label}>{t.itemNameLabel}</Text>
         <TextInput
           value={name}
@@ -177,8 +223,28 @@ function PantryItemForm({
           placeholder={t.pantryNamePlaceholder}
           placeholderTextColor={colors.textMuted}
           style={styles.input}
-          autoFocus={!editingItem}
+          autoFocus={!editingItem && !scannedPrefill?.name}
         />
+
+        {suggestions.length > 0 ? (
+          <View style={styles.suggestionRow}>
+            {suggestions.map((s) => (
+              <Pressable
+                key={s.normalizedName}
+                onPress={() => {
+                  hapticSelection();
+                  setName(s.name);
+                  setCategory(s.category);
+                  setLocation(s.location);
+                  if (s.unit && !unit) setUnit(s.unit);
+                }}
+                style={styles.suggestionPill}
+              >
+                <Text style={styles.suggestionText}>{s.name}</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
 
         <Text style={styles.label}>{t.storageLocationLabel}</Text>
         <View style={styles.chipGrid}>
@@ -190,7 +256,7 @@ function PantryItemForm({
                 onPress={() => {
                   hapticSelection();
                   setLocation(loc.id);
-                  if (!editingItem) {
+                  if (!editingItem && !scannedPrefill) {
                     setCategory(loc.defaultGroceryCategory);
                   }
                 }}
@@ -352,6 +418,7 @@ export function PantryItemModal({
   visible,
   editingItem,
   defaultLocation = 'fridge',
+  scannedPrefill = null,
   onClose,
   onSave,
   onDelete,
@@ -365,9 +432,16 @@ export function PantryItemModal({
     >
       {visible ? (
         <PantryItemForm
-          key={editingItem ? `edit-${editingItem.id}` : `new-${defaultLocation}`}
+          key={
+            editingItem
+              ? `edit-${editingItem.id}`
+              : scannedPrefill
+                ? `scan-${scannedPrefill.barcode}`
+                : `new-${defaultLocation}`
+          }
           editingItem={editingItem}
           defaultLocation={defaultLocation}
+          scannedPrefill={scannedPrefill}
           onClose={onClose}
           onSave={onSave}
           onDelete={onDelete}
@@ -408,6 +482,21 @@ const createStyles = (c: ThemeColors) =>
     content: {
       padding: 20,
     },
+    barcodeNotice: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      padding: 12,
+      borderRadius: 12,
+      backgroundColor: c.primarySoft,
+      marginBottom: 8,
+    },
+    barcodeNoticeText: {
+      flex: 1,
+      fontSize: 13,
+      fontWeight: '600',
+      color: c.primaryText,
+    },
     label: {
       fontSize: 12,
       fontWeight: '700',
@@ -426,6 +515,23 @@ const createStyles = (c: ThemeColors) =>
       paddingVertical: 12,
       fontSize: 15,
       color: c.text,
+    },
+    suggestionRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 6,
+      marginTop: 8,
+    },
+    suggestionPill: {
+      paddingHorizontal: 11,
+      paddingVertical: 6,
+      borderRadius: 999,
+      backgroundColor: c.primarySoft,
+    },
+    suggestionText: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: c.primaryText,
     },
     row: {
       flexDirection: 'row',

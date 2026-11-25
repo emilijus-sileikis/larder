@@ -1,4 +1,4 @@
-import { File, Paths } from 'expo-file-system';
+import { Directory, File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import {
   isGroceryCategory,
@@ -7,6 +7,7 @@ import {
   isStockLevel,
 } from '@/constants/categories';
 import type {
+  BackupRecipeEntry,
   GroceryItem,
   LarderBackupPayload,
   MealPlanEntry,
@@ -15,18 +16,67 @@ import type {
 } from '@/types/larder';
 import { getWeekStartIso, parseIsoDate } from '@/utils/dates';
 
-export function buildBackupPayload(data: {
-  pantryItems: PantryItem[];
-  recipes: Recipe[];
-  mealPlanEntries: MealPlanEntry[];
-  groceryItems: GroceryItem[];
-}): LarderBackupPayload {
+function getPhotosDir(): Directory {
+  const dir = new Directory(Paths.document, 'recipe-photos');
+  if (!dir.exists) {
+    dir.create({ idempotent: true, intermediates: true });
+  }
+  return dir;
+}
+
+export async function buildBackupPayload(
+  data: {
+    pantryItems: PantryItem[];
+    recipes: Recipe[];
+    mealPlanEntries: MealPlanEntry[];
+    groceryItems: GroceryItem[];
+  },
+  options: { includePhotos?: boolean } = {}
+): Promise<LarderBackupPayload> {
   const recipeIndexById = new Map<number, number>();
   const recipeTitleById = new Map<number, string>();
   data.recipes.forEach((r, idx) => {
     recipeIndexById.set(r.id, idx);
     recipeTitleById.set(r.id, r.title);
   });
+
+  const recipes: BackupRecipeEntry[] = [];
+  for (const r of data.recipes) {
+    let photoBase64: string | null = null;
+    let photoExt: string | null = null;
+    if (options.includePhotos && r.photoUri) {
+      try {
+        const file = new File(r.photoUri);
+        if (file.exists) {
+          photoBase64 = await file.base64();
+          const extMatch = r.photoUri.match(/\.([a-zA-Z0-9]+)(?:\?|$)/);
+          photoExt = (extMatch ? extMatch[1] : 'jpg').toLowerCase();
+        }
+      } catch {
+        // Ignore unreadable photo file
+      }
+    }
+
+    recipes.push({
+      title: r.title,
+      description: r.description,
+      servings: r.servings,
+      prepMinutes: r.prepMinutes,
+      cookMinutes: r.cookMinutes,
+      photoUri: r.photoUri,
+      photoBase64,
+      photoExt,
+      sourceUrl: r.sourceUrl,
+      tags: r.tags,
+      steps: r.steps,
+      ingredients: r.ingredients.map((ing) => ({
+        name: ing.name,
+        quantity: ing.quantity,
+        unit: ing.unit,
+        category: ing.category,
+      })),
+    });
+  }
 
   return {
     version: 1,
@@ -42,22 +92,7 @@ export function buildBackupPayload(data: {
       expiresAt: item.expiresAt,
       notes: item.notes,
     })),
-    recipes: data.recipes.map((r) => ({
-      title: r.title,
-      description: r.description,
-      servings: r.servings,
-      prepMinutes: r.prepMinutes,
-      cookMinutes: r.cookMinutes,
-      photoUri: r.photoUri,
-      tags: r.tags,
-      steps: r.steps,
-      ingredients: r.ingredients.map((ing) => ({
-        name: ing.name,
-        quantity: ing.quantity,
-        unit: ing.unit,
-        category: ing.category,
-      })),
-    })),
+    recipes,
     mealPlanEntries: data.mealPlanEntries
       .filter((entry) => recipeTitleById.has(entry.recipeId))
       .map((entry) => ({
@@ -77,6 +112,41 @@ export function buildBackupPayload(data: {
       sourceNote: g.sourceNote,
       checked: g.checked,
     })),
+  };
+}
+
+export async function materializeBackupPhotos(
+  payload: LarderBackupPayload
+): Promise<LarderBackupPayload> {
+  const dir = getPhotosDir();
+  const hydratedRecipes: BackupRecipeEntry[] = [];
+
+  for (const r of payload.recipes) {
+    let nextUri = r.photoUri ?? null;
+    if (r.photoBase64 && typeof r.photoBase64 === 'string') {
+      try {
+        const rawExt = (r.photoExt ?? 'jpg').toLowerCase();
+        const safeExt = ['jpg', 'jpeg', 'png', 'webp'].includes(rawExt) ? rawExt : 'jpg';
+        const filename = `restored_${Date.now()}_${Math.floor(Math.random() * 10000)}.${safeExt}`;
+        const destFile = new File(dir, filename);
+        const stripped = r.photoBase64.replace(/^data:[^;]+;base64,/, '');
+        await destFile.write(stripped, { encoding: 'base64' });
+        nextUri = destFile.uri;
+      } catch {
+        // Keep fallback uri if restore write fails
+      }
+    }
+    hydratedRecipes.push({
+      ...r,
+      photoUri: nextUri,
+      photoBase64: undefined,
+      photoExt: undefined,
+    });
+  }
+
+  return {
+    ...payload,
+    recipes: hydratedRecipes,
   };
 }
 
@@ -164,7 +234,7 @@ export function parseLarderBackupJson(rawText: string): LarderBackupPayload {
     }
   }
 
-  const recipes: LarderBackupPayload['recipes'] = [];
+  const recipes: BackupRecipeEntry[] = [];
   if (Array.isArray(obj.recipes)) {
     for (const raw of obj.recipes) {
       if (!raw || typeof raw !== 'object') continue;
@@ -183,7 +253,7 @@ export function parseLarderBackupJson(rawText: string): LarderBackupPayload {
             .map((s) => s.trim())
         : [];
 
-      const ingredients: LarderBackupPayload['recipes'][number]['ingredients'] = [];
+      const ingredients: BackupRecipeEntry['ingredients'] = [];
       if (Array.isArray(r.ingredients)) {
         for (const rawIng of r.ingredients) {
           if (!rawIng || typeof rawIng !== 'object') continue;
@@ -206,6 +276,9 @@ export function parseLarderBackupJson(rawText: string): LarderBackupPayload {
         prepMinutes: asNonNegativeInt(r.prepMinutes, 10),
         cookMinutes: asNonNegativeInt(r.cookMinutes, 15),
         photoUri: typeof r.photoUri === 'string' ? r.photoUri : null,
+        photoBase64: typeof r.photoBase64 === 'string' ? r.photoBase64 : null,
+        photoExt: typeof r.photoExt === 'string' ? r.photoExt : null,
+        sourceUrl: typeof r.sourceUrl === 'string' && r.sourceUrl.trim() ? r.sourceUrl.trim() : null,
         tags,
         steps,
         ingredients,

@@ -17,9 +17,15 @@ import {
 import {
   buildBackupPayload,
   exportLarderBackup,
+  materializeBackupPhotos,
   parseLarderBackupJson,
   pickBackupJsonText,
 } from '@/services/backupService';
+import {
+  cancelAllExpiryNotifications,
+  requestExpiryNotificationPermission,
+  syncExpiryNotifications,
+} from '@/services/notificationService';
 import { deleteLocalPhoto } from '@/services/photoService';
 import { DARK_COLORS, LIGHT_COLORS, type ThemeColors } from '@/theme/colors';
 import type {
@@ -30,9 +36,11 @@ import type {
   MealPlanEntryInput,
   PantryItem,
   PantryItemInput,
+  PantryLocation,
   PantryMatchSummary,
   Recipe,
   RecipeInput,
+  StapleHistoryEntry,
   StockLevel,
   ThemeMode,
 } from '@/types/larder';
@@ -49,6 +57,11 @@ interface GenerateResult {
   skippedInPantry: number;
 }
 
+export interface SharedRecipePayload {
+  url?: string;
+  text?: string;
+}
+
 interface LarderContextValue {
   ready: boolean;
   error: string | null;
@@ -59,13 +72,20 @@ interface LarderContextValue {
   resolvedTheme: 'light' | 'dark';
   colors: ThemeColors;
   setThemeMode: (mode: ThemeMode) => Promise<void>;
+  expiryNotificationsEnabled: boolean;
+  setExpiryNotificationsEnabled: (enabled: boolean) => Promise<boolean>;
+  lastBackupAt: string | null;
+
   pendingImportedRecipe: RecipeInput | null;
   setPendingImportedRecipe: (draft: RecipeInput | null) => void;
+  sharedRecipePayload: SharedRecipePayload | null;
+  setSharedRecipePayload: (payload: SharedRecipePayload | null) => void;
 
   pantryItems: PantryItem[];
   recipes: Recipe[];
   mealPlanEntries: MealPlanEntry[];
   groceryItems: GroceryItem[];
+  stapleHistory: StapleHistoryEntry[];
   recipeMatchMap: Record<number, PantryMatchSummary>;
 
   refreshAll: () => Promise<void>;
@@ -74,8 +94,20 @@ interface LarderContextValue {
   addPantryItem: (input: PantryItemInput) => Promise<number>;
   editPantryItem: (id: number, input: PantryItemInput) => Promise<void>;
   setPantryStock: (id: number, stockLevel: StockLevel) => Promise<void>;
+  applyCookedPantryUpdates: (
+    updates: { id: number; stockLevel: StockLevel }[]
+  ) => Promise<void>;
   removePantryItem: (id: number) => Promise<void>;
+  restorePantryItem: (item: PantryItem) => Promise<number>;
   sendPantryItemToGroceries: (item: PantryItem) => Promise<{ added: number; merged: number }>;
+  restockAllLowAndOutPantry: () => Promise<{ added: number; merged: number }>;
+  saveBarcodeMapping: (entry: {
+    barcode: string;
+    name: string;
+    category: GroceryCategory;
+    location: PantryLocation;
+    unit?: string;
+  }) => Promise<void>;
 
   // Recipes
   addRecipe: (input: RecipeInput) => Promise<number>;
@@ -104,14 +136,20 @@ interface LarderContextValue {
   ) => Promise<void>;
   toggleGroceryChecked: (id: number, checked: boolean) => Promise<void>;
   removeGroceryItem: (id: number) => Promise<void>;
+  restoreGroceryItem: (item: GroceryItem) => Promise<number>;
   moveCheckedToPantry: () => Promise<number>;
   clearChecked: () => Promise<number>;
 
   // Sample Data / Backup / Reset
   loadSampleData: () => Promise<void>;
   clearAllData: () => Promise<void>;
-  exportBackup: () => Promise<boolean>;
-  importBackup: () => Promise<{ imported: boolean; recipes: number; pantry: number; groceries: number }>;
+  exportBackup: (options?: { includePhotos?: boolean }) => Promise<boolean>;
+  importBackup: () => Promise<{
+    imported: boolean;
+    recipes: number;
+    pantry: number;
+    groceries: number;
+  }>;
 }
 
 const LarderContext = createContext<LarderContextValue | null>(null);
@@ -122,30 +160,67 @@ export function LarderProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [language, setLanguageState] = useState<Language>('en');
   const [themeMode, setThemeModeState] = useState<ThemeMode>('system');
+  const [expiryNotificationsEnabled, setExpiryNotificationsState] = useState(false);
+  const [lastBackupAt, setLastBackupAt] = useState<string | null>(null);
+
   const [pendingImportedRecipe, setPendingImportedRecipe] =
     useState<RecipeInput | null>(null);
+  const [sharedRecipePayload, setSharedRecipePayload] =
+    useState<SharedRecipePayload | null>(null);
 
   const [pantryItems, setPantryItems] = useState<PantryItem[]>([]);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [mealPlanEntries, setMealPlanEntries] = useState<MealPlanEntry[]>([]);
   const [groceryItems, setGroceryItems] = useState<GroceryItem[]>([]);
+  const [stapleHistory, setStapleHistory] = useState<StapleHistoryEntry[]>([]);
 
   const resolvedTheme: 'light' | 'dark' =
     themeMode === 'system' ? (systemScheme === 'dark' ? 'dark' : 'light') : themeMode;
   const colors = resolvedTheme === 'dark' ? DARK_COLORS : LIGHT_COLORS;
   const t = TRANSLATIONS[language];
 
+  // Targeted table refreshers (#12 performance optimization)
+  const refreshPantry = useCallback(async () => {
+    const [pantry, history] = await Promise.all([
+      DB.listPantryItems(),
+      DB.listStapleHistory(),
+    ]);
+    setPantryItems(pantry);
+    setStapleHistory(history);
+  }, []);
+
+  const refreshRecipes = useCallback(async () => {
+    const recs = await DB.listRecipes();
+    setRecipes(recs);
+  }, []);
+
+  const refreshMealPlan = useCallback(async () => {
+    const plans = await DB.listMealPlanEntries();
+    setMealPlanEntries(plans);
+  }, []);
+
+  const refreshGroceries = useCallback(async () => {
+    const [groceries, history] = await Promise.all([
+      DB.listGroceryItems(),
+      DB.listStapleHistory(),
+    ]);
+    setGroceryItems(groceries);
+    setStapleHistory(history);
+  }, []);
+
   const refreshAll = useCallback(async () => {
-    const [pantry, recs, plans, groceries] = await Promise.all([
+    const [pantry, recs, plans, groceries, history] = await Promise.all([
       DB.listPantryItems(),
       DB.listRecipes(),
       DB.listMealPlanEntries(),
       DB.listGroceryItems(),
+      DB.listStapleHistory(),
     ]);
     setPantryItems(pantry);
     setRecipes(recs);
     setMealPlanEntries(plans);
     setGroceryItems(groceries);
+    setStapleHistory(history);
   }, []);
 
   const seedInitialSampleData = useCallback(async (seedLang: Language = 'en') => {
@@ -298,18 +373,17 @@ export function LarderProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       try {
         await DB.getDatabase();
-        const [savedTheme, savedLang, initialized] = await Promise.all([
+        const [savedTheme, savedLang, savedNotif, savedLastBackup] = await Promise.all([
           DB.getThemeModeSetting(),
           DB.getLanguageSetting(),
-          DB.getSetting('has_initialized'),
+          DB.getExpiryNotificationsSetting(),
+          DB.getLastBackupAtSetting(),
         ]);
-        if (!initialized) {
-          await seedInitialSampleData(savedLang);
-          await DB.setSetting('has_initialized', '1');
-        }
         if (!active) return;
         setThemeModeState(savedTheme);
         setLanguageState(savedLang);
+        setExpiryNotificationsState(savedNotif);
+        setLastBackupAt(savedLastBackup);
         await refreshAll();
         if (active) setReady(true);
       } catch (e) {
@@ -322,7 +396,13 @@ export function LarderProvider({ children }: { children: React.ReactNode }) {
     return () => {
       active = false;
     };
-  }, [refreshAll, seedInitialSampleData]);
+  }, [refreshAll]);
+
+  // Keep scheduled expiry reminders in sync whenever pantry / setting / language changes
+  useEffect(() => {
+    if (!ready) return;
+    syncExpiryNotifications(pantryItems, expiryNotificationsEnabled, language);
+  }, [ready, pantryItems, expiryNotificationsEnabled, language]);
 
   const recipeMatchMap = useMemo(() => {
     const map: Record<number, PantryMatchSummary> = {};
@@ -342,22 +422,38 @@ export function LarderProvider({ children }: { children: React.ReactNode }) {
     await DB.setSetting('theme_mode', mode);
   }, []);
 
-  // Pantry actions
+  const setExpiryNotificationsEnabled = useCallback(async (enabled: boolean) => {
+    if (enabled) {
+      const granted = await requestExpiryNotificationPermission();
+      if (!granted) {
+        setExpiryNotificationsState(false);
+        await DB.setSetting('expiry_notifications_enabled', '0');
+        return false;
+      }
+    } else {
+      await cancelAllExpiryNotifications();
+    }
+    setExpiryNotificationsState(enabled);
+    await DB.setSetting('expiry_notifications_enabled', enabled ? '1' : '0');
+    return true;
+  }, []);
+
+  // Pantry actions (targeted refresh)
   const addPantryItem = useCallback(
     async (input: PantryItemInput) => {
       const id = await DB.createPantryItem(input);
-      await refreshAll();
+      await refreshPantry();
       return id;
     },
-    [refreshAll]
+    [refreshPantry]
   );
 
   const editPantryItem = useCallback(
     async (id: number, input: PantryItemInput) => {
       await DB.updatePantryItem(id, input);
-      await refreshAll();
+      await refreshPantry();
     },
-    [refreshAll]
+    [refreshPantry]
   );
 
   const setPantryStock = useCallback(async (id: number, stockLevel: StockLevel) => {
@@ -367,12 +463,43 @@ export function LarderProvider({ children }: { children: React.ReactNode }) {
     await DB.updatePantryStockLevel(id, stockLevel);
   }, []);
 
-  const removePantryItem = useCallback(
-    async (id: number) => {
-      await DB.deletePantryItem(id);
-      await refreshAll();
+  const applyCookedPantryUpdates = useCallback(
+    async (updates: { id: number; stockLevel: StockLevel }[]) => {
+      if (updates.length === 0) return;
+      const updateMap = new Map(updates.map((u) => [u.id, u.stockLevel]));
+      setPantryItems((prev) =>
+        prev.map((item) =>
+          updateMap.has(item.id)
+            ? { ...item, stockLevel: updateMap.get(item.id)! }
+            : item
+        )
+      );
+      await DB.batchUpdatePantryStockLevels(updates);
     },
-    [refreshAll]
+    []
+  );
+
+  const removePantryItem = useCallback(async (id: number) => {
+    setPantryItems((prev) => prev.filter((item) => item.id !== id));
+    await DB.deletePantryItem(id);
+  }, []);
+
+  const restorePantryItem = useCallback(
+    async (item: PantryItem) => {
+      const id = await DB.createPantryItem({
+        name: item.name,
+        location: item.location,
+        stockLevel: item.stockLevel,
+        quantity: item.quantity,
+        unit: item.unit,
+        category: item.category,
+        expiresAt: item.expiresAt,
+        notes: item.notes,
+      });
+      await refreshPantry();
+      return id;
+    },
+    [refreshPantry]
   );
 
   const sendPantryItemToGroceries = useCallback(
@@ -383,23 +510,54 @@ export function LarderProvider({ children }: { children: React.ReactNode }) {
           quantity: item.quantity,
           unit: item.unit,
           category: item.category,
-          sourceNote: 'Restock from Pantry',
+          sourceNote: language === 'lt' ? 'Papildymas iš sandėliuko' : 'Restock from Pantry',
         },
       ]);
-      await refreshAll();
+      await refreshGroceries();
       return res;
     },
-    [refreshAll]
+    [language, refreshGroceries]
   );
 
-  // Recipe actions
+  const restockAllLowAndOutPantry = useCallback(async () => {
+    const lowAndOut = pantryItems.filter((i) => i.stockLevel !== 'in_stock');
+    if (lowAndOut.length === 0) return { added: 0, merged: 0 };
+    const sourceNote =
+      language === 'lt' ? 'Papildymas iš sandėliuko' : 'Restock from Pantry';
+    const res = await DB.addOrMergeGroceryItems(
+      lowAndOut.map((item) => ({
+        name: item.name,
+        quantity: item.quantity,
+        unit: item.unit,
+        category: item.category,
+        sourceNote,
+      }))
+    );
+    await refreshGroceries();
+    return res;
+  }, [pantryItems, language, refreshGroceries]);
+
+  const saveBarcodeMapping = useCallback(
+    async (entry: {
+      barcode: string;
+      name: string;
+      category: GroceryCategory;
+      location: PantryLocation;
+      unit?: string;
+    }) => {
+      await DB.saveLocalBarcodeProduct(entry);
+    },
+    []
+  );
+
+  // Recipe actions (targeted refresh)
   const addRecipe = useCallback(
     async (input: RecipeInput) => {
       const id = await DB.createRecipe(input);
-      await refreshAll();
+      await refreshRecipes();
       return id;
     },
-    [refreshAll]
+    [refreshRecipes]
   );
 
   const editRecipe = useCallback(
@@ -409,9 +567,9 @@ export function LarderProvider({ children }: { children: React.ReactNode }) {
         deleteLocalPhoto(prev.photoUri);
       }
       await DB.updateRecipe(id, input);
-      await refreshAll();
+      await refreshRecipes();
     },
-    [recipes, refreshAll]
+    [recipes, refreshRecipes]
   );
 
   const removeRecipe = useCallback(
@@ -421,9 +579,9 @@ export function LarderProvider({ children }: { children: React.ReactNode }) {
         deleteLocalPhoto(prev.photoUri);
       }
       await DB.deleteRecipe(id);
-      await refreshAll();
+      await Promise.all([refreshRecipes(), refreshMealPlan()]);
     },
-    [recipes, refreshAll]
+    [recipes, refreshRecipes, refreshMealPlan]
   );
 
   const addMissingRecipeIngredientsToGroceries = useCallback(
@@ -453,47 +611,41 @@ export function LarderProvider({ children }: { children: React.ReactNode }) {
         return { added: 0, merged: 0, skippedInPantry };
       }
       const res = await DB.addOrMergeGroceryItems(toAdd);
-      await refreshAll();
+      await refreshGroceries();
       return { ...res, skippedInPantry };
     },
-    [pantryItems, refreshAll]
+    [pantryItems, refreshGroceries]
   );
 
-  // Meal Plan actions
+  // Meal Plan actions (targeted refresh)
   const addMealPlanEntry = useCallback(
     async (input: MealPlanEntryInput) => {
       const id = await DB.createMealPlanEntry(input);
-      await refreshAll();
+      await refreshMealPlan();
       return id;
     },
-    [refreshAll]
+    [refreshMealPlan]
   );
 
-  const setMealPlanServings = useCallback(
-    async (id: number, servings: number) => {
-      const clamped = Math.max(1, Math.round(servings));
-      setMealPlanEntries((prev) =>
-        prev.map((e) => (e.id === id ? { ...e, servings: clamped } : e))
-      );
-      await DB.updateMealPlanServings(id, clamped);
-    },
-    []
-  );
+  const setMealPlanServings = useCallback(async (id: number, servings: number) => {
+    const clamped = Math.max(1, Math.round(servings));
+    setMealPlanEntries((prev) =>
+      prev.map((e) => (e.id === id ? { ...e, servings: clamped } : e))
+    );
+    await DB.updateMealPlanServings(id, clamped);
+  }, []);
 
-  const removeMealPlanEntry = useCallback(
-    async (id: number) => {
-      await DB.deleteMealPlanEntry(id);
-      await refreshAll();
-    },
-    [refreshAll]
-  );
+  const removeMealPlanEntry = useCallback(async (id: number) => {
+    setMealPlanEntries((prev) => prev.filter((e) => e.id !== id));
+    await DB.deleteMealPlanEntry(id);
+  }, []);
 
   const clearWeekMealPlan = useCallback(
     async (weekStart: string) => {
       await DB.clearMealPlanWeek(weekStart);
-      await refreshAll();
+      await refreshMealPlan();
     },
-    [refreshAll]
+    [refreshMealPlan]
   );
 
   const generateGroceriesForWeek = useCallback(
@@ -551,20 +703,20 @@ export function LarderProvider({ children }: { children: React.ReactNode }) {
       }
 
       const res = await DB.addOrMergeGroceryItems(toInsert);
-      await refreshAll();
+      await refreshGroceries();
       return { ...res, skippedInPantry };
     },
-    [mealPlanEntries, recipes, pantryItems, refreshAll]
+    [mealPlanEntries, recipes, pantryItems, refreshGroceries]
   );
 
-  // Grocery actions
+  // Grocery actions (targeted refresh)
   const addGroceryItem = useCallback(
     async (input: GroceryItemInput) => {
       const res = await DB.addOrMergeGroceryItems([input]);
-      await refreshAll();
+      await refreshGroceries();
       return res;
     },
-    [refreshAll]
+    [refreshGroceries]
   );
 
   const editGroceryItem = useCallback(
@@ -573,9 +725,9 @@ export function LarderProvider({ children }: { children: React.ReactNode }) {
       input: { name: string; quantity: number | null; unit: string; category: GroceryCategory }
     ) => {
       await DB.updateGroceryItem(id, input);
-      await refreshAll();
+      await refreshGroceries();
     },
-    [refreshAll]
+    [refreshGroceries]
   );
 
   const toggleGroceryChecked = useCallback(async (id: number, checked: boolean) => {
@@ -585,25 +737,38 @@ export function LarderProvider({ children }: { children: React.ReactNode }) {
     await DB.toggleGroceryItemChecked(id, checked);
   }, []);
 
-  const removeGroceryItem = useCallback(
-    async (id: number) => {
-      await DB.deleteGroceryItem(id);
-      await refreshAll();
+  const removeGroceryItem = useCallback(async (id: number) => {
+    setGroceryItems((prev) => prev.filter((g) => g.id !== id));
+    await DB.deleteGroceryItem(id);
+  }, []);
+
+  const restoreGroceryItem = useCallback(
+    async (item: GroceryItem) => {
+      const id = await DB.insertExactGroceryItem({
+        name: item.name,
+        quantity: item.quantity,
+        unit: item.unit,
+        category: item.category,
+        checked: item.checked,
+        sourceNote: item.sourceNote,
+      });
+      await refreshGroceries();
+      return id;
     },
-    [refreshAll]
+    [refreshGroceries]
   );
 
   const moveCheckedToPantry = useCallback(async () => {
     const moved = await DB.moveCheckedGroceriesToPantry();
-    await refreshAll();
+    await Promise.all([refreshGroceries(), refreshPantry()]);
     return moved;
-  }, [refreshAll]);
+  }, [refreshGroceries, refreshPantry]);
 
   const clearChecked = useCallback(async () => {
     const removed = await DB.clearCheckedGroceries();
-    await refreshAll();
+    await refreshGroceries();
     return removed;
-  }, [refreshAll]);
+  }, [refreshGroceries]);
 
   // Sample / Backup / Clear
   const loadSampleData = useCallback(async () => {
@@ -621,30 +786,43 @@ export function LarderProvider({ children }: { children: React.ReactNode }) {
     await refreshAll();
   }, [recipes, refreshAll]);
 
-  const exportBackup = useCallback(async () => {
-    const payload = buildBackupPayload({
-      pantryItems,
-      recipes,
-      mealPlanEntries,
-      groceryItems,
-    });
-    return exportLarderBackup(payload);
-  }, [pantryItems, recipes, mealPlanEntries, groceryItems]);
+  const exportBackup = useCallback(
+    async (options?: { includePhotos?: boolean }) => {
+      const payload = await buildBackupPayload(
+        {
+          pantryItems,
+          recipes,
+          mealPlanEntries,
+          groceryItems,
+        },
+        options
+      );
+      const shared = await exportLarderBackup(payload);
+      if (shared) {
+        const now = new Date().toISOString();
+        setLastBackupAt(now);
+        await DB.setSetting('last_backup_at', now);
+      }
+      return shared;
+    },
+    [pantryItems, recipes, mealPlanEntries, groceryItems]
+  );
 
   const importBackup = useCallback(async () => {
     const text = await pickBackupJsonText();
     if (!text) {
       return { imported: false, recipes: 0, pantry: 0, groceries: 0 };
     }
-    const payload = parseLarderBackupJson(text);
-    await DB.replaceAllWithBackup(payload);
+    const parsed = parseLarderBackupJson(text);
+    const hydrated = await materializeBackupPhotos(parsed);
+    await DB.replaceAllWithBackup(hydrated);
     await DB.setSetting('has_initialized', '1');
     await refreshAll();
     return {
       imported: true,
-      recipes: payload.recipes.length,
-      pantry: payload.pantryItems.length,
-      groceries: payload.groceryItems.length,
+      recipes: hydrated.recipes.length,
+      pantry: hydrated.pantryItems.length,
+      groceries: hydrated.groceryItems.length,
     };
   }, [refreshAll]);
 
@@ -659,19 +837,29 @@ export function LarderProvider({ children }: { children: React.ReactNode }) {
       resolvedTheme,
       colors,
       setThemeMode,
+      expiryNotificationsEnabled,
+      setExpiryNotificationsEnabled,
+      lastBackupAt,
       pendingImportedRecipe,
       setPendingImportedRecipe,
+      sharedRecipePayload,
+      setSharedRecipePayload,
       pantryItems,
       recipes,
       mealPlanEntries,
       groceryItems,
+      stapleHistory,
       recipeMatchMap,
       refreshAll,
       addPantryItem,
       editPantryItem,
       setPantryStock,
+      applyCookedPantryUpdates,
       removePantryItem,
+      restorePantryItem,
       sendPantryItemToGroceries,
+      restockAllLowAndOutPantry,
+      saveBarcodeMapping,
       addRecipe,
       editRecipe,
       removeRecipe,
@@ -685,6 +873,7 @@ export function LarderProvider({ children }: { children: React.ReactNode }) {
       editGroceryItem,
       toggleGroceryChecked,
       removeGroceryItem,
+      restoreGroceryItem,
       moveCheckedToPantry,
       clearChecked,
       loadSampleData,
@@ -702,18 +891,27 @@ export function LarderProvider({ children }: { children: React.ReactNode }) {
       resolvedTheme,
       colors,
       setThemeMode,
+      expiryNotificationsEnabled,
+      setExpiryNotificationsEnabled,
+      lastBackupAt,
       pendingImportedRecipe,
+      sharedRecipePayload,
       pantryItems,
       recipes,
       mealPlanEntries,
       groceryItems,
+      stapleHistory,
       recipeMatchMap,
       refreshAll,
       addPantryItem,
       editPantryItem,
       setPantryStock,
+      applyCookedPantryUpdates,
       removePantryItem,
+      restorePantryItem,
       sendPantryItemToGroceries,
+      restockAllLowAndOutPantry,
+      saveBarcodeMapping,
       addRecipe,
       editRecipe,
       removeRecipe,
@@ -727,6 +925,7 @@ export function LarderProvider({ children }: { children: React.ReactNode }) {
       editGroceryItem,
       toggleGroceryChecked,
       removeGroceryItem,
+      restoreGroceryItem,
       moveCheckedToPantry,
       clearChecked,
       loadSampleData,

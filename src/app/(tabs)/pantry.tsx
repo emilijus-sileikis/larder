@@ -1,7 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   Pressable,
-  ScrollView,
+  SectionList,
   StyleSheet,
   Text,
   TextInput,
@@ -10,14 +10,19 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppHeader } from '@/components/AppHeader';
+import { BarcodeScannerModal } from '@/components/BarcodeScannerModal';
 import { EmptyState } from '@/components/EmptyState';
 import { PantryItemModal } from '@/components/PantryItemModal';
 import { SettingsModal } from '@/components/SettingsModal';
+import { SwipeableRow } from '@/components/SwipeableRow';
+import { UndoSnackbar } from '@/components/UndoSnackbar';
 import { PANTRY_LOCATIONS, STOCK_LEVELS } from '@/constants/categories';
 import { useLarder } from '@/db/LarderContext';
 import { PANTRY_LOCATION_LABELS, STOCK_LEVEL_LABELS } from '@/i18n/translations';
+import type { BarcodeLookupResult } from '@/services/barcodeService';
 import type { ThemeColors } from '@/theme/colors';
 import type {
+  IoniconName,
   PantryItem,
   PantryItemInput,
   PantryLocation,
@@ -33,6 +38,15 @@ import { formatQuantityWithUnit } from '@/utils/ingredients';
 
 type FilterMode = 'all' | 'expiring' | 'low_out';
 
+interface PantrySection {
+  key: string;
+  title: string;
+  icon: IoniconName;
+  isExpiringSection: boolean;
+  locationId?: PantryLocation;
+  data: PantryItem[];
+}
+
 export default function PantryScreen() {
   const {
     colors,
@@ -43,30 +57,43 @@ export default function PantryScreen() {
     editPantryItem,
     setPantryStock,
     removePantryItem,
+    restorePantryItem,
     sendPantryItemToGroceries,
+    restockAllLowAndOutPantry,
   } = useLarder();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [scannerOpen, setScannerOpen] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingItem, setEditingItem] = useState<PantryItem | null>(null);
+  const [scannedPrefill, setScannedPrefill] = useState<BarcodeLookupResult | null>(null);
   const [defaultLoc, setDefaultLoc] = useState<PantryLocation>('fridge');
 
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<FilterMode>('all');
-  const [toast, setToast] = useState<string | null>(null);
 
-  const showToast = (msg: string) => {
-    setToast(msg);
-    setTimeout(() => {
-      setToast((cur) => (cur === msg ? null : cur));
-    }, 2400);
+  const [snackbar, setSnackbar] = useState<{
+    message: string;
+    undoItem?: PantryItem;
+  } | null>(null);
+  const snackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showSnackbar = (message: string, undoItem?: PantryItem) => {
+    if (snackTimerRef.current) clearTimeout(snackTimerRef.current);
+    setSnackbar({ message, undoItem });
+    snackTimerRef.current = setTimeout(() => {
+      setSnackbar(null);
+    }, undoItem ? 4200 : 2400);
   };
 
   const filteredItems = useMemo(() => {
     const q = query.trim().toLowerCase();
     return pantryItems.filter((item) => {
-      if (filter === 'expiring' && !(item.stockLevel !== 'out' && isExpiringSoon(item.expiresAt, 3))) {
+      if (
+        filter === 'expiring' &&
+        !(item.stockLevel !== 'out' && isExpiringSoon(item.expiresAt, 3))
+      ) {
         return false;
       }
       if (filter === 'low_out' && item.stockLevel === 'in_stock') {
@@ -80,33 +107,53 @@ export default function PantryScreen() {
     });
   }, [pantryItems, query, filter]);
 
-  const expiringSoonItems = useMemo(() => {
-    return filteredItems
+  const sections = useMemo<PantrySection[]>(() => {
+    const expiringSoon = filteredItems
       .filter((i) => i.stockLevel !== 'out' && isExpiringSoon(i.expiresAt, 3))
-      .sort((a, b) => (getDaysUntilExpiry(a.expiresAt) ?? 99) - (getDaysUntilExpiry(b.expiresAt) ?? 99));
-  }, [filteredItems]);
+      .sort(
+        (a, b) =>
+          (getDaysUntilExpiry(a.expiresAt) ?? 99) -
+          (getDaysUntilExpiry(b.expiresAt) ?? 99)
+      );
 
-  const expiringIdSet = useMemo(
-    () => new Set(expiringSoonItems.map((i) => i.id)),
-    [expiringSoonItems]
-  );
+    const expiringIds = new Set(expiringSoon.map((i) => i.id));
+    const list: PantrySection[] = [];
 
-  const locationSections = useMemo(() => {
-    const byLoc = new Map<PantryLocation, PantryItem[]>();
-    for (const item of filteredItems) {
-      if (filter === 'all' && expiringIdSet.has(item.id)) {
-        // Expiring soon items are surfaced at the top in their own section
-        continue;
-      }
-      const list = byLoc.get(item.location) ?? [];
-      list.push(item);
-      byLoc.set(item.location, list);
+    if (expiringSoon.length > 0) {
+      list.push({
+        key: '__expiring__',
+        title: t.expiringSoonSection,
+        icon: 'alert-circle',
+        isExpiringSection: true,
+        data: expiringSoon,
+      });
     }
-    return PANTRY_LOCATIONS.map((meta) => ({
-      meta,
-      items: byLoc.get(meta.id) ?? [],
-    })).filter((s) => s.items.length > 0);
-  }, [filteredItems, filter, expiringIdSet]);
+
+    if (filter !== 'expiring') {
+      const byLoc = new Map<PantryLocation, PantryItem[]>();
+      for (const item of filteredItems) {
+        if (filter === 'all' && expiringIds.has(item.id)) continue;
+        const arr = byLoc.get(item.location) ?? [];
+        arr.push(item);
+        byLoc.set(item.location, arr);
+      }
+      for (const meta of PANTRY_LOCATIONS) {
+        const items = byLoc.get(meta.id) ?? [];
+        if (items.length > 0) {
+          list.push({
+            key: meta.id,
+            title: PANTRY_LOCATION_LABELS[language][meta.id],
+            icon: meta.icon,
+            isExpiringSection: false,
+            locationId: meta.id,
+            data: items,
+          });
+        }
+      }
+    }
+
+    return list;
+  }, [filteredItems, filter, language, t]);
 
   const inStockCount = useMemo(
     () => pantryItems.filter((i) => i.stockLevel === 'in_stock').length,
@@ -114,6 +161,13 @@ export default function PantryScreen() {
   );
   const lowOutCount = useMemo(
     () => pantryItems.filter((i) => i.stockLevel !== 'in_stock').length,
+    [pantryItems]
+  );
+  const expiringTotalCount = useMemo(
+    () =>
+      pantryItems.filter(
+        (i) => i.stockLevel !== 'out' && isExpiringSoon(i.expiresAt, 3)
+      ).length,
     [pantryItems]
   );
 
@@ -134,138 +188,35 @@ export default function PantryScreen() {
   const handleSendToGroceries = async (item: PantryItem) => {
     await sendPantryItemToGroceries(item);
     hapticSuccess();
-    showToast(t.addedToGroceriesToast(item.name));
+    showSnackbar(t.addedToGroceriesToast(item.name));
   };
 
-  const renderPantryRow = (item: PantryItem, idx: number, showLocationTag = false) => {
-    const qtyLabel = formatQuantityWithUnit(item.quantity, item.unit);
-    const expLabel = formatExpiryLabel(item.expiresAt, language);
-    const expDays = getDaysUntilExpiry(item.expiresAt);
-    const isExpired = expDays !== null && expDays < 0;
-    const isSoon = expDays !== null && expDays >= 0 && expDays <= 3;
+  const handleRestockAll = async () => {
+    const res = await restockAllLowAndOutPantry();
+    if (res.added + res.merged > 0) {
+      hapticSuccess();
+      showSnackbar(t.restockedAllToast(res.added, res.merged));
+    }
+  };
 
-    return (
-      <View key={item.id}>
-        {idx > 0 ? <View style={styles.rowDivider} /> : null}
-        <View style={styles.itemBlock}>
-          <Pressable
-            onPress={() => {
-              hapticSelection();
-              setEditingItem(item);
-              setModalVisible(true);
-            }}
-            style={styles.itemHeader}
-          >
-            <View style={{ flex: 1 }}>
-              <View style={styles.nameRow}>
-                <Text style={styles.itemName} numberOfLines={1}>
-                  {item.name}
-                </Text>
-                {qtyLabel ? <Text style={styles.qtyText}>{qtyLabel}</Text> : null}
-              </View>
-              <View style={styles.badgeRow}>
-                {expLabel ? (
-                  <View
-                    style={[
-                      styles.expBadge,
-                      isExpired
-                        ? { backgroundColor: colors.dangerSoft }
-                        : isSoon
-                          ? { backgroundColor: colors.warningSoft }
-                          : { backgroundColor: colors.surfaceAlt },
-                    ]}
-                  >
-                    <Ionicons
-                      name="time-outline"
-                      size={11}
-                      color={
-                        isExpired
-                          ? colors.danger
-                          : isSoon
-                            ? colors.warning
-                            : colors.textSecondary
-                      }
-                    />
-                    <Text
-                      style={[
-                        styles.expBadgeText,
-                        {
-                          color: isExpired
-                            ? colors.danger
-                            : isSoon
-                              ? colors.warning
-                              : colors.textSecondary,
-                        },
-                      ]}
-                    >
-                      {expLabel}
-                    </Text>
-                  </View>
-                ) : null}
-                {showLocationTag ? (
-                  <Text style={styles.locSub}>
-                    {PANTRY_LOCATION_LABELS[language][item.location]}
-                  </Text>
-                ) : null}
-                {item.notes ? (
-                  <Text style={styles.noteSub} numberOfLines={1}>
-                    {item.notes}
-                  </Text>
-                ) : null}
-              </View>
-            </View>
-            <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
-          </Pressable>
+  const handleSwipeDelete = async (item: PantryItem) => {
+    await removePantryItem(item.id);
+    showSnackbar(t.deletedItemToast(item.name), item);
+  };
 
-          {/* Fast 1-tap Stock Level Toggle + Send to Groceries */}
-          <View style={styles.controlsRow}>
-            <View style={styles.stockSegment}>
-              {STOCK_LEVELS.map((lvl) => {
-                const active = item.stockLevel === lvl.id;
-                const activeBg =
-                  lvl.id === 'in_stock'
-                    ? colors.primary
-                    : lvl.id === 'low'
-                      ? colors.warning
-                      : colors.danger;
-                return (
-                  <Pressable
-                    key={lvl.id}
-                    onPress={() => handleQuickStock(item, lvl.id)}
-                    style={[
-                      styles.stockPill,
-                      active && { backgroundColor: activeBg },
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.stockPillText,
-                        active && { color: colors.white },
-                      ]}
-                    >
-                      {STOCK_LEVEL_LABELS[language][lvl.id]}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
+  const handleUndoDelete = async () => {
+    if (!snackbar?.undoItem) return;
+    const toRestore = snackbar.undoItem;
+    setSnackbar(null);
+    await restorePantryItem(toRestore);
+    hapticSuccess();
+  };
 
-            {item.stockLevel !== 'in_stock' ? (
-              <Pressable
-                onPress={() => handleSendToGroceries(item)}
-                style={({ pressed }) => [
-                  styles.restockBtn,
-                  pressed && { opacity: 0.85 },
-                ]}
-              >
-                <Ionicons name="cart-outline" size={14} color={colors.accentText} />
-                <Text style={styles.restockText}>{t.addToListShort}</Text>
-              </Pressable>
-            ) : null}
-          </View>
-        </View>
-      </View>
-    );
+  const handleBarcodeResult = (result: BarcodeLookupResult) => {
+    setEditingItem(null);
+    setScannedPrefill(result);
+    setDefaultLoc(result.location);
+    setModalVisible(true);
   };
 
   return (
@@ -275,18 +226,31 @@ export default function PantryScreen() {
         subtitle={t.pantrySubtitle(inStockCount, lowOutCount)}
         onOpenSettings={() => setSettingsOpen(true)}
         rightSlot={
-          <Pressable
-            onPress={() => {
-              hapticSelection();
-              setEditingItem(null);
-              setDefaultLoc('fridge');
-              setModalVisible(true);
-            }}
-            style={({ pressed }) => [styles.newBtn, pressed && { opacity: 0.85 }]}
-          >
-            <Ionicons name="add" size={18} color={colors.white} />
-            <Text style={styles.newBtnText}>{t.add}</Text>
-          </Pressable>
+          <View style={styles.headerActions}>
+            <Pressable
+              onPress={() => {
+                hapticSelection();
+                setScannerOpen(true);
+              }}
+              style={({ pressed }) => [styles.scanBtn, pressed && { opacity: 0.8 }]}
+              accessibilityLabel={t.scanBarcodeTitle}
+            >
+              <Ionicons name="barcode-outline" size={20} color={colors.accentText} />
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                hapticSelection();
+                setEditingItem(null);
+                setScannedPrefill(null);
+                setDefaultLoc('fridge');
+                setModalVisible(true);
+              }}
+              style={({ pressed }) => [styles.newBtn, pressed && { opacity: 0.85 }]}
+            >
+              <Ionicons name="add" size={18} color={colors.white} />
+              <Text style={styles.newBtnText}>{t.add}</Text>
+            </Pressable>
+          </View>
         }
       />
 
@@ -312,14 +276,7 @@ export default function PantryScreen() {
           {(
             [
               { id: 'all', label: t.filterAll(pantryItems.length) },
-              {
-                id: 'expiring',
-                label: t.filterExpiring(
-                  pantryItems.filter(
-                    (i) => i.stockLevel !== 'out' && isExpiringSoon(i.expiresAt, 3)
-                  ).length
-                ),
-              },
+              { id: 'expiring', label: t.filterExpiring(expiringTotalCount) },
               { id: 'low_out', label: t.filterLowOut(lowOutCount) },
             ] as { id: FilterMode; label: string }[]
           ).map((f) => {
@@ -342,17 +299,24 @@ export default function PantryScreen() {
             );
           })}
         </View>
+
+        {lowOutCount > 0 ? (
+          <Pressable
+            onPress={handleRestockAll}
+            style={({ pressed }) => [styles.restockAllBtn, pressed && { opacity: 0.85 }]}
+          >
+            <Ionicons name="cart-outline" size={16} color={colors.accentText} />
+            <Text style={styles.restockAllText}>{t.restockAllBtn(lowOutCount)}</Text>
+          </Pressable>
+        ) : null}
       </View>
 
-      {toast ? (
-        <View style={styles.toast}>
-          <Ionicons name="checkmark-circle" size={16} color={colors.primary} />
-          <Text style={styles.toastText}>{toast}</Text>
-        </View>
-      ) : null}
-
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        {filteredItems.length === 0 ? (
+      <SectionList
+        sections={sections}
+        keyExtractor={(item) => String(item.id)}
+        stickySectionHeadersEnabled={false}
+        contentContainerStyle={styles.scrollContent}
+        ListEmptyComponent={
           <EmptyState
             icon="cube-outline"
             title={pantryItems.length === 0 ? t.pantryEmptyTitle : t.pantryNoMatchTitle}
@@ -363,6 +327,7 @@ export default function PantryScreen() {
             onAction={() => {
               if (pantryItems.length === 0) {
                 setEditingItem(null);
+                setScannedPrefill(null);
                 setModalVisible(true);
               } else {
                 setFilter('all');
@@ -370,66 +335,205 @@ export default function PantryScreen() {
               }
             }}
           />
-        ) : (
-          <>
-            {/* Expiring Soon Spotlight at the top */}
-            {expiringSoonItems.length > 0 ? (
-              <View style={styles.section}>
-                <View style={styles.sectionHeader}>
-                  <View style={styles.sectionTitleWrap}>
-                    <Ionicons name="alert-circle" size={16} color={colors.warning} />
-                    <Text style={[styles.sectionTitle, { color: colors.warning }]}>
-                      {t.expiringSoonSection}
-                    </Text>
-                  </View>
-                  <Text style={styles.sectionCount}>{expiringSoonItems.length}</Text>
-                </View>
-                <View style={[styles.sectionCard, { borderColor: colors.warning }]}>
-                  {expiringSoonItems.map((item, idx) =>
-                    renderPantryRow(item, idx, true)
-                  )}
-                </View>
-              </View>
-            ) : null}
-
-            {/* Grouped by storage location */}
-            {filter !== 'expiring'
-              ? locationSections.map(({ meta, items }) => (
-                  <View key={meta.id} style={styles.section}>
-                    <View style={styles.sectionHeader}>
-                      <View style={styles.sectionTitleWrap}>
-                        <Ionicons name={meta.icon} size={16} color={colors.primary} />
-                        <Text style={styles.sectionTitle}>
-                          {PANTRY_LOCATION_LABELS[language][meta.id]}
-                        </Text>
-                      </View>
-                      <Pressable
-                        onPress={() => {
-                          hapticSelection();
-                          setEditingItem(null);
-                          setDefaultLoc(meta.id);
-                          setModalVisible(true);
-                        }}
-                        hitSlop={8}
-                      >
-                        <Ionicons name="add-circle-outline" size={20} color={colors.textMuted} />
-                      </Pressable>
-                    </View>
-                    <View style={styles.sectionCard}>
-                      {items.map((item, idx) => renderPantryRow(item, idx, false))}
-                    </View>
-                  </View>
-                ))
-              : null}
-          </>
+        }
+        renderSectionHeader={({ section }) => (
+          <View style={styles.sectionHeader}>
+            <View style={styles.sectionTitleWrap}>
+              <Ionicons
+                name={section.icon}
+                size={16}
+                color={section.isExpiringSection ? colors.warning : colors.primary}
+              />
+              <Text
+                style={[
+                  styles.sectionTitle,
+                  section.isExpiringSection && { color: colors.warning },
+                ]}
+              >
+                {section.title}
+              </Text>
+            </View>
+            {section.locationId ? (
+              <Pressable
+                onPress={() => {
+                  hapticSelection();
+                  setEditingItem(null);
+                  setScannedPrefill(null);
+                  setDefaultLoc(section.locationId!);
+                  setModalVisible(true);
+                }}
+                hitSlop={8}
+              >
+                <Ionicons name="add-circle-outline" size={20} color={colors.textMuted} />
+              </Pressable>
+            ) : (
+              <Text style={styles.sectionCount}>{section.data.length}</Text>
+            )}
+          </View>
         )}
-      </ScrollView>
+        renderItem={({ item, index, section }) => {
+          const isFirst = index === 0;
+          const isLast = index === section.data.length - 1;
+          const qtyLabel = formatQuantityWithUnit(item.quantity, item.unit);
+          const expLabel = formatExpiryLabel(item.expiresAt, language);
+          const expDays = getDaysUntilExpiry(item.expiresAt);
+          const isExpired = expDays !== null && expDays < 0;
+          const isSoon = expDays !== null && expDays >= 0 && expDays <= 3;
 
+          return (
+            <View
+              style={[
+                styles.cardSlice,
+                section.isExpiringSection && { borderColor: colors.warning },
+                isFirst && styles.cardFirst,
+                isLast && styles.cardLast,
+              ]}
+            >
+              {!isFirst ? <View style={styles.rowDivider} /> : null}
+              <SwipeableRow onDelete={() => handleSwipeDelete(item)}>
+                <View style={styles.itemBlock}>
+                  <Pressable
+                    onPress={() => {
+                      hapticSelection();
+                      setScannedPrefill(null);
+                      setEditingItem(item);
+                      setModalVisible(true);
+                    }}
+                    style={styles.itemHeader}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <View style={styles.nameRow}>
+                        <Text style={styles.itemName} numberOfLines={1}>
+                          {item.name}
+                        </Text>
+                        {qtyLabel ? <Text style={styles.qtyText}>{qtyLabel}</Text> : null}
+                      </View>
+                      <View style={styles.badgeRow}>
+                        {expLabel ? (
+                          <View
+                            style={[
+                              styles.expBadge,
+                              isExpired
+                                ? { backgroundColor: colors.dangerSoft }
+                                : isSoon
+                                  ? { backgroundColor: colors.warningSoft }
+                                  : { backgroundColor: colors.surfaceAlt },
+                            ]}
+                          >
+                            <Ionicons
+                              name="time-outline"
+                              size={11}
+                              color={
+                                isExpired
+                                  ? colors.danger
+                                  : isSoon
+                                    ? colors.warning
+                                    : colors.textSecondary
+                              }
+                            />
+                            <Text
+                              style={[
+                                styles.expBadgeText,
+                                {
+                                  color: isExpired
+                                    ? colors.danger
+                                    : isSoon
+                                      ? colors.warning
+                                      : colors.textSecondary,
+                                },
+                              ]}
+                            >
+                              {expLabel}
+                            </Text>
+                          </View>
+                        ) : null}
+                        {section.isExpiringSection ? (
+                          <Text style={styles.locSub}>
+                            {PANTRY_LOCATION_LABELS[language][item.location]}
+                          </Text>
+                        ) : null}
+                        {item.notes ? (
+                          <Text style={styles.noteSub} numberOfLines={1}>
+                            {item.notes}
+                          </Text>
+                        ) : null}
+                      </View>
+                    </View>
+                    <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+                  </Pressable>
+
+                  <View style={styles.controlsRow}>
+                    <View style={styles.stockSegment}>
+                      {STOCK_LEVELS.map((lvl) => {
+                        const active = item.stockLevel === lvl.id;
+                        const activeBg =
+                          lvl.id === 'in_stock'
+                            ? colors.primary
+                            : lvl.id === 'low'
+                              ? colors.warning
+                              : colors.danger;
+                        return (
+                          <Pressable
+                            key={lvl.id}
+                            onPress={() => handleQuickStock(item, lvl.id)}
+                            style={[
+                              styles.stockPill,
+                              active && { backgroundColor: activeBg },
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.stockPillText,
+                                active && { color: colors.white },
+                              ]}
+                            >
+                              {STOCK_LEVEL_LABELS[language][lvl.id]}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+
+                    {item.stockLevel !== 'in_stock' ? (
+                      <Pressable
+                        onPress={() => handleSendToGroceries(item)}
+                        style={({ pressed }) => [
+                          styles.restockBtn,
+                          pressed && { opacity: 0.85 },
+                        ]}
+                      >
+                        <Ionicons name="cart-outline" size={14} color={colors.accentText} />
+                        <Text style={styles.restockText}>{t.addToListShort}</Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                </View>
+              </SwipeableRow>
+            </View>
+          );
+        }}
+        renderSectionFooter={() => <View style={{ height: 18 }} />}
+      />
+
+      <UndoSnackbar
+        message={snackbar?.message ?? null}
+        onUndo={snackbar?.undoItem ? handleUndoDelete : undefined}
+      />
+
+      <BarcodeScannerModal
+        visible={scannerOpen}
+        onClose={() => setScannerOpen(false)}
+        onResult={handleBarcodeResult}
+      />
       <PantryItemModal
         visible={modalVisible}
         editingItem={editingItem}
         defaultLocation={defaultLoc}
-        onClose={() => setModalVisible(false)}
+        scannedPrefill={scannedPrefill}
+        onClose={() => {
+          setModalVisible(false);
+          setScannedPrefill(null);
+        }}
         onSave={handleSave}
         onDelete={removePantryItem}
       />
@@ -443,6 +547,19 @@ const createStyles = (c: ThemeColors) =>
     safe: {
       flex: 1,
       backgroundColor: c.bg,
+    },
+    headerActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    scanBtn: {
+      width: 40,
+      height: 40,
+      borderRadius: 12,
+      backgroundColor: c.accentSoft,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
     newBtn: {
       flexDirection: 'row',
@@ -504,28 +621,23 @@ const createStyles = (c: ThemeColors) =>
     filterTextActive: {
       color: c.white,
     },
-    toast: {
-      marginHorizontal: 16,
-      marginBottom: 8,
-      paddingHorizontal: 14,
-      paddingVertical: 10,
-      borderRadius: 12,
-      backgroundColor: c.primarySoft,
+    restockAllBtn: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 8,
+      justifyContent: 'center',
+      gap: 6,
+      paddingVertical: 9,
+      borderRadius: 12,
+      backgroundColor: c.accentSoft,
     },
-    toastText: {
+    restockAllText: {
       fontSize: 13,
-      fontWeight: '600',
-      color: c.primaryText,
+      fontWeight: '700',
+      color: c.accentText,
     },
     scrollContent: {
       paddingHorizontal: 16,
-      paddingBottom: 32,
-    },
-    section: {
-      marginBottom: 18,
+      paddingBottom: 68,
     },
     sectionHeader: {
       flexDirection: 'row',
@@ -551,12 +663,22 @@ const createStyles = (c: ThemeColors) =>
       fontWeight: '700',
       color: c.textMuted,
     },
-    sectionCard: {
+    cardSlice: {
       backgroundColor: c.surface,
-      borderRadius: 16,
-      borderWidth: 1,
+      borderLeftWidth: 1,
+      borderRightWidth: 1,
       borderColor: c.border,
       overflow: 'hidden',
+    },
+    cardFirst: {
+      borderTopWidth: 1,
+      borderTopLeftRadius: 16,
+      borderTopRightRadius: 16,
+    },
+    cardLast: {
+      borderBottomWidth: 1,
+      borderBottomLeftRadius: 16,
+      borderBottomRightRadius: 16,
     },
     rowDivider: {
       height: 1,
@@ -567,6 +689,7 @@ const createStyles = (c: ThemeColors) =>
       paddingHorizontal: 14,
       paddingVertical: 12,
       gap: 10,
+      backgroundColor: c.surface,
     },
     itemHeader: {
       flexDirection: 'row',

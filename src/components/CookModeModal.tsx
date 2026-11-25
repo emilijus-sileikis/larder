@@ -21,16 +21,19 @@ interface CookModeModalProps {
   recipe: Recipe;
   scaleMultiplier: number;
   onClose: () => void;
+  onMarkCooked?: () => void;
 }
 
 function CookModeContent({
   recipe,
   scaleMultiplier,
   onClose,
+  onMarkCooked,
 }: {
   recipe: Recipe;
   scaleMultiplier: number;
   onClose: () => void;
+  onMarkCooked?: () => void;
 }) {
   useKeepAwake('larder-cook-mode');
   const { colors, t } = useLarder();
@@ -164,6 +167,20 @@ function CookModeContent({
             <Text style={styles.doneBannerText}>{t.allStepsComplete}</Text>
           </View>
         ) : null}
+
+        {onMarkCooked ? (
+          <Pressable
+            onPress={() => {
+              hapticSuccess();
+              onClose();
+              onMarkCooked();
+            }}
+            style={({ pressed }) => [styles.cookedBtn, pressed && { opacity: 0.88 }]}
+          >
+            <Ionicons name="cube-outline" size={18} color={colors.white} />
+            <Text style={styles.cookedBtnText}>{t.finishAndUpdatePantry}</Text>
+          </Pressable>
+        ) : null}
       </ScrollView>
     </View>
   );
@@ -174,6 +191,7 @@ export function CookModeModal({
   recipe,
   scaleMultiplier,
   onClose,
+  onMarkCooked,
 }: CookModeModalProps) {
   return (
     <Modal
@@ -188,6 +206,7 @@ export function CookModeModal({
           recipe={recipe}
           scaleMultiplier={scaleMultiplier}
           onClose={onClose}
+          onMarkCooked={onMarkCooked}
         />
       ) : null}
     </Modal>
@@ -356,6 +375,21 @@ const createStyles = (c: ThemeColors) =>
       fontSize: 15,
       fontWeight: '700',
       color: c.primaryText,
+    },
+    cookedBtn: {
+      marginTop: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      paddingVertical: 14,
+      borderRadius: 14,
+      backgroundColor: c.primary,
+    },
+    cookedBtnText: {
+      fontSize: 15,
+      fontWeight: '700',
+      color: c.white,
     },
     emptyText: {
       textAlign: 'center',

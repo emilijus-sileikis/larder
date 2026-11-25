@@ -13,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppHeader } from '@/components/AppHeader';
 import { EmptyState } from '@/components/EmptyState';
+import { MarkCookedModal } from '@/components/MarkCookedModal';
 import { RecipePickerModal } from '@/components/RecipePickerModal';
 import { SettingsModal } from '@/components/SettingsModal';
 import { useLarder } from '@/db/LarderContext';
@@ -48,6 +49,7 @@ export default function MealPlanScreen() {
   const [weekStart, setWeekStart] = useState(currentWeekStart);
   const [excludePantry, setExcludePantry] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [cookedRecipe, setCookedRecipe] = useState<Recipe | null>(null);
 
   const [pickerTarget, setPickerTarget] = useState<{
     dayIndex: number;
@@ -186,6 +188,18 @@ export default function MealPlanScreen() {
               <Ionicons name="add" size={14} color={colors.text} />
             </Pressable>
           </View>
+
+          <Pressable
+            onPress={() => {
+              hapticSelection();
+              setCookedRecipe(recipe);
+            }}
+            style={styles.cookedIconBtn}
+            hitSlop={6}
+            accessibilityLabel={t.markCookedBtn}
+          >
+            <Ionicons name="checkmark-done-outline" size={16} color={colors.primary} />
+          </Pressable>
 
           <Pressable
             onPress={() => {
@@ -389,6 +403,11 @@ export default function MealPlanScreen() {
         heading={pickerTarget?.heading ?? ''}
         onClose={() => setPickerTarget(null)}
         onPick={handlePickRecipe}
+      />
+      <MarkCookedModal
+        visible={cookedRecipe !== null}
+        recipe={cookedRecipe}
+        onClose={() => setCookedRecipe(null)}
       />
       <SettingsModal visible={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </SafeAreaView>
@@ -626,6 +645,14 @@ const createStyles = (c: ThemeColors) =>
       color: c.text,
       minWidth: 20,
       textAlign: 'center',
+    },
+    cookedIconBtn: {
+      width: 28,
+      height: 28,
+      borderRadius: 8,
+      backgroundColor: c.primarySoft,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
     removeBtn: {
       padding: 4,

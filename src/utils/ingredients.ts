@@ -1,10 +1,12 @@
 import type {
   GroceryCategory,
+  GroceryItem,
   PantryItem,
   PantryMatchSummary,
   RecipeIngredient,
   StockLevel,
 } from '@/types/larder';
+import { isExpiringSoon } from './dates';
 
 const INVARIANT_PLURALS = new Set([
   'hummus',
@@ -599,6 +601,7 @@ export function computeRecipePantryMatch(
   const ingredientStatus: Record<number, StockLevel | 'missing'> = {};
   let onHandCount = 0;
   let lowCount = 0;
+  let usesExpiringCount = 0;
 
   for (const ing of ingredients) {
     const match = findMatchingPantryItem(ing.name, pantryItems);
@@ -611,6 +614,9 @@ export function computeRecipePantryMatch(
       } else if (match.stockLevel === 'low') {
         lowCount += 1;
       }
+      if (match.stockLevel !== 'out' && isExpiringSoon(match.expiresAt, 3)) {
+        usesExpiringCount += 1;
+      }
     }
   }
 
@@ -620,6 +626,40 @@ export function computeRecipePantryMatch(
     lowCount,
     totalCount,
     ratio: totalCount > 0 ? onHandCount / totalCount : 0,
+    usesExpiringCount,
     ingredientStatus,
   };
+}
+
+/**
+ * Formats unchecked grocery items grouped by store aisle into a clean plain-text checklist
+ * for copying or sharing.
+ */
+export function formatGroceryListAsPlainText(
+  items: GroceryItem[],
+  aisleOrder: GroceryCategory[],
+  aisleLabelResolver: (cat: GroceryCategory) => string,
+  title: string
+): string {
+  const unchecked = items.filter((i) => !i.checked);
+  if (unchecked.length === 0) return '';
+
+  const byCat = new Map<GroceryCategory, GroceryItem[]>();
+  for (const item of unchecked) {
+    const list = byCat.get(item.category) ?? [];
+    list.push(item);
+    byCat.set(item.category, list);
+  }
+
+  const lines: string[] = [title, ''];
+  for (const cat of aisleOrder) {
+    const group = byCat.get(cat);
+    if (!group || group.length === 0) continue;
+    lines.push(`${aisleLabelResolver(cat)}:`);
+    for (const g of group) {
+      lines.push(`☐ ${formatIngredientLine(g.name, g.quantity, g.unit)}`);
+    }
+    lines.push('');
+  }
+  return lines.join('\n').trim();
 }

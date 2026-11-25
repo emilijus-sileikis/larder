@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -25,6 +25,8 @@ import { hapticSelection, hapticSuccess } from '@/utils/haptics';
 
 interface ImportRecipeModalProps {
   visible: boolean;
+  initialUrl?: string;
+  initialText?: string;
   onClose: () => void;
   onImported: (recipe: RecipeInput) => void;
 }
@@ -32,9 +34,13 @@ interface ImportRecipeModalProps {
 type ImportTab = 'url' | 'text';
 
 function ImportRecipeContent({
+  initialUrl,
+  initialText,
   onClose,
   onImported,
 }: {
+  initialUrl?: string;
+  initialText?: string;
   onClose: () => void;
   onImported: (recipe: RecipeInput) => void;
 }) {
@@ -42,31 +48,43 @@ function ImportRecipeContent({
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
-  const [tab, setTab] = useState<ImportTab>('url');
-  const [urlText, setUrlText] = useState('');
-  const [rawText, setRawText] = useState('');
+  const [tab, setTab] = useState<ImportTab>(!initialUrl && initialText ? 'text' : 'url');
+  const [urlText, setUrlText] = useState(initialUrl ?? '');
+  const [rawText, setRawText] = useState(initialText ?? '');
   const [loading, setLoading] = useState(false);
+  const autoRanRef = useRef(false);
 
-  const handleImportUrl = async () => {
-    if (!urlText.trim()) {
-      Alert.alert(t.importFailedTitle, t.importUrlEmptyMsg);
-      return;
+  const runUrlImport = useCallback(
+    async (targetUrl: string) => {
+      if (!targetUrl.trim()) {
+        Alert.alert(t.importFailedTitle, t.importUrlEmptyMsg);
+        return;
+      }
+      try {
+        setLoading(true);
+        const parsed = await importRecipeFromUrl(targetUrl);
+        hapticSuccess();
+        onImported(parsed);
+        onClose();
+      } catch (e) {
+        Alert.alert(
+          t.importFailedTitle,
+          e instanceof Error ? e.message : 'Could not import recipe.'
+        );
+      } finally {
+        setLoading(false);
+      }
+    },
+    [t, onImported, onClose]
+  );
+
+  // Auto-fetch if launched via Android Share-to-Larder with a URL
+  useEffect(() => {
+    if (initialUrl && !autoRanRef.current) {
+      autoRanRef.current = true;
+      runUrlImport(initialUrl);
     }
-    try {
-      setLoading(true);
-      const parsed = await importRecipeFromUrl(urlText);
-      hapticSuccess();
-      onImported(parsed);
-      onClose();
-    } catch (e) {
-      Alert.alert(
-        t.importFailedTitle,
-        e instanceof Error ? e.message : 'Could not import recipe.'
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [initialUrl, runUrlImport]);
 
   const handleImportText = () => {
     if (!rawText.trim()) {
@@ -108,7 +126,6 @@ function ImportRecipeContent({
           { paddingBottom: Math.max(insets.bottom, 24) },
         ]}
       >
-        {/* Mode switcher */}
         <View style={styles.segmentRow}>
           <Pressable
             onPress={() => {
@@ -156,7 +173,7 @@ function ImportRecipeContent({
               autoCorrect={false}
               keyboardType="url"
               returnKeyType="go"
-              onSubmitEditing={handleImportUrl}
+              onSubmitEditing={() => runUrlImport(urlText)}
               style={styles.input}
             />
             <View style={styles.hintBox}>
@@ -170,7 +187,7 @@ function ImportRecipeContent({
 
             <Pressable
               disabled={loading}
-              onPress={handleImportUrl}
+              onPress={() => runUrlImport(urlText)}
               style={({ pressed }) => [
                 styles.primaryBtn,
                 loading && { opacity: 0.7 },
@@ -217,6 +234,8 @@ function ImportRecipeContent({
 
 export function ImportRecipeModal({
   visible,
+  initialUrl,
+  initialText,
   onClose,
   onImported,
 }: ImportRecipeModalProps) {
@@ -228,7 +247,13 @@ export function ImportRecipeModal({
       onRequestClose={onClose}
     >
       {visible ? (
-        <ImportRecipeContent onClose={onClose} onImported={onImported} />
+        <ImportRecipeContent
+          key={`${initialUrl ?? ''}-${initialText ?? ''}`}
+          initialUrl={initialUrl}
+          initialText={initialText}
+          onClose={onClose}
+          onImported={onImported}
+        />
       ) : null}
     </Modal>
   );
