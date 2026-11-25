@@ -1,0 +1,667 @@
+import type {
+  GroceryCategory,
+  MealSlot,
+  PantryLocation,
+  StockLevel,
+  ThemeMode,
+} from '@/types/larder';
+
+export type Language = 'en' | 'lt';
+
+export const GROCERY_CATEGORY_LABELS: Record<
+  Language,
+  Record<GroceryCategory, { label: string; shortLabel: string }>
+> = {
+  en: {
+    produce: { label: 'Produce', shortLabel: 'Produce' },
+    dairy_eggs: { label: 'Dairy & Eggs', shortLabel: 'Dairy & Eggs' },
+    meat_fish: { label: 'Meat & Fish', shortLabel: 'Meat & Fish' },
+    bakery: { label: 'Bakery', shortLabel: 'Bakery' },
+    pantry_dry: { label: 'Pantry / Dry Goods', shortLabel: 'Dry Goods' },
+    frozen: { label: 'Frozen', shortLabel: 'Frozen' },
+    household: { label: 'Household / Other', shortLabel: 'Household' },
+  },
+  lt: {
+    produce: { label: 'Daržovės ir vaisiai', shortLabel: 'Daržovės' },
+    dairy_eggs: { label: 'Pienas ir kiaušiniai', shortLabel: 'Pienas' },
+    meat_fish: { label: 'Mėsa ir žuvis', shortLabel: 'Mėsa ir žuvis' },
+    bakery: { label: 'Kepiniai', shortLabel: 'Kepiniai' },
+    pantry_dry: { label: 'Bakalėja', shortLabel: 'Bakalėja' },
+    frozen: { label: 'Šaldyti produktai', shortLabel: 'Šaldyti' },
+    household: { label: 'Buitis / Kita', shortLabel: 'Buitis' },
+  },
+};
+
+export const PANTRY_LOCATION_LABELS: Record<Language, Record<PantryLocation, string>> = {
+  en: {
+    fridge: 'Fridge',
+    freezer: 'Freezer',
+    pantry: 'Pantry',
+    spices: 'Spices & Staples',
+  },
+  lt: {
+    fridge: 'Šaldytuvas',
+    freezer: 'Šaldiklis',
+    pantry: 'Spintelė',
+    spices: 'Prieskoniai ir pagrindai',
+  },
+};
+
+export const STOCK_LEVEL_LABELS: Record<Language, Record<StockLevel, string>> = {
+  en: {
+    in_stock: 'In Stock',
+    low: 'Low',
+    out: 'Out',
+  },
+  lt: {
+    in_stock: 'Yra',
+    low: 'Baigiasi',
+    out: 'Nėra',
+  },
+};
+
+export const MEAL_SLOT_LABELS: Record<Language, Record<MealSlot, string>> = {
+  en: {
+    breakfast: 'Breakfast',
+    lunch: 'Lunch',
+    dinner: 'Dinner',
+    snack: 'Snack',
+  },
+  lt: {
+    breakfast: 'Pusryčiai',
+    lunch: 'Pietūs',
+    dinner: 'Vakarienė',
+    snack: 'Užkandis',
+  },
+};
+
+export const THEME_MODE_LABELS: Record<Language, Record<ThemeMode, string>> = {
+  en: {
+    system: 'System',
+    light: 'Light',
+    dark: 'Dark',
+  },
+  lt: {
+    system: 'Sistema',
+    light: 'Šviesi',
+    dark: 'Tamsi',
+  },
+};
+
+export const DEFAULT_TAGS_BY_LANG: Record<Language, string[]> = {
+  en: [
+    'Quick',
+    'High-Protein',
+    'Dinner',
+    'Lunch',
+    'Breakfast',
+    'Meal Prep',
+    'Vegetarian',
+    'One-Pot',
+    'Comfort',
+  ],
+  lt: [
+    'Greita',
+    'Daug baltymų',
+    'Vakarienė',
+    'Pietūs',
+    'Pusryčiai',
+    'Maisto ruoša',
+    'Vegetariška',
+    'Vieno puodo',
+    'Jauku',
+  ],
+};
+
+const EN = {
+  // App & Loading
+  openingLarder: 'Opening Larder...',
+  dbErrorTitle: 'Local Database Error',
+
+  // Tabs
+  tabGroceries: 'Groceries',
+  tabRecipes: 'Recipes',
+  tabMealPlan: 'Meal Plan',
+  tabPantry: 'Pantry',
+
+  // Common
+  cancel: 'Cancel',
+  save: 'Save',
+  saving: 'Saving...',
+  saveChanges: 'Save Changes',
+  add: 'Add',
+  newLabel: 'New',
+  clear: 'Clear',
+  deleteLabel: 'Delete',
+  ok: 'OK',
+  all: 'All',
+  errorTitle: 'Error',
+  servingsShort: 'srv',
+  servingsWord: (n: number) => `${n} ${n === 1 ? 'serving' : 'servings'}`,
+  ingredientsWord: (n: number) => `${n} ${n === 1 ? 'ingredient' : 'ingredients'}`,
+  minutesShort: (n: number) => `${n}m`,
+
+  // Groceries
+  groceriesTitle: 'Groceries',
+  groceriesSubtitlePickUp: (unchecked: number, checked: number) =>
+    `${unchecked} to pick up${checked > 0 ? ` • ${checked} in cart` : ''}`,
+  groceriesSubtitleAllChecked: (checked: number) => `All ${checked} items checked off`,
+  groceriesSubtitleEmpty: 'Your shopping basket is clear',
+  quickAddPlaceholder: 'Quick add (e.g. "4 eggs" or "Avocados")',
+  qtyPlaceholder: 'Qty',
+  unitPlaceholder: 'Unit (g, ml, can...)',
+  mergedBanner: (name: string) => `Merged into existing "${name}"`,
+  movedToPantryOne: 'Moved 1 item to Pantry as In Stock',
+  movedToPantryMany: (n: number) => `Moved ${n} items to Pantry as In Stock`,
+  groceriesEmptyTitle: 'Shopping list is empty',
+  groceriesEmptyDesc:
+    'Quick-add items above, generate a list from your Meal Plan, or send low pantry staples here.',
+  inCartSection: (n: number) => `In Cart (${n})`,
+  moveCheckedToPantry: (n: number) => `Move Checked to Pantry (${n})`,
+  clearCheckedTitle: 'Clear Checked Items',
+  clearCheckedMsg: (n: number) =>
+    `Remove ${n} checked item${n === 1 ? '' : 's'} without adding to Pantry?`,
+  editGroceryTitle: 'Edit Grocery Item',
+  itemNameLabel: 'Item Name',
+  itemNamePlaceholder: 'Item name',
+  quantityLabel: 'Quantity',
+  unitLabel: 'Unit',
+  storeAisleLabel: 'Store Aisle',
+  addedFromLabel: (source: string) => `Added from: ${source}`,
+  removeFromList: 'Remove from List',
+  missingNameTitle: 'Missing Name',
+  missingNameMsg: 'Enter an item name.',
+  invalidQtyTitle: 'Invalid Quantity',
+  invalidQtyMsg: 'Enter a positive number or leave blank.',
+
+  // Recipes
+  recipesTitle: 'Recipes',
+  recipesSubtitle: (n: number) => `${n} saved in your cookbook`,
+  importBtn: 'Import',
+  searchRecipesPlaceholder: 'Search recipes, tags, ingredients...',
+  sortMatch: 'Match',
+  sortRecent: 'Recent',
+  onHandBadge: (onHand: number, total: number) => `${onHand}/${total} on hand`,
+  inPantryShort: (onHand: number, total: number) => `${onHand}/${total} in pantry`,
+  recipesEmptyTitle: 'Your cookbook is empty',
+  recipesNoMatchTitle: 'No matching recipes',
+  recipesEmptyDesc:
+    'Save your go-to meals or import recipes from any URL to unlock live Pantry Match and instant grocery lists.',
+  recipesNoMatchDesc: 'Try clearing your search or tag filter.',
+  addFirstRecipe: 'Add First Recipe',
+  clearFilters: 'Clear Filters',
+
+  // Recipe Detail
+  recipeNotFound: 'Recipe not found',
+  goBack: 'Go Back',
+  prepLabel: (m: number) => `Prep ${m}m`,
+  cookLabel: (m: number) => `Cook ${m}m`,
+  cookModeBtn: 'Cook Mode',
+  addMissingBtn: (n: number) => (n > 0 ? `Add ${n} Missing` : 'All In Pantry'),
+  ingredientsHeading: 'Ingredients',
+  instructionsHeading: 'Instructions',
+  noInstructionsYet: 'No instructions added yet.',
+  statusInStock: 'In stock',
+  statusLow: 'Low',
+  statusNeed: 'Need',
+  allSetTitle: 'All Set!',
+  allSetMsg: 'Every ingredient for this recipe is already In Stock in your Pantry.',
+  addedToGroceriesTitle: 'Added to Groceries',
+  addedSummary: (added: number, merged: number, skipped: number) => {
+    const parts: string[] = [];
+    if (added > 0) parts.push(`added ${added}`);
+    if (merged > 0) parts.push(`merged ${merged}`);
+    if (skipped > 0) parts.push(`skipped ${skipped} in pantry`);
+    return `${parts.join(', ')}.`;
+  },
+  openGroceries: 'Open Groceries',
+  deleteRecipeTitle: 'Delete Recipe',
+  deleteRecipeMsg: (title: string) =>
+    `Permanently delete "${title}"? Any planned meals using it will also be removed.`,
+
+  // Cook Mode
+  cookModeAwake: 'Cook Mode • Screen stays awake',
+  stepsProgress: (done: number, total: number) => `${done}/${total} steps`,
+  cookIngredientsHeader: (servings: number) => `Ingredients (${servings} servings)`,
+  noStepsListed: 'No steps listed for this recipe.',
+  allStepsComplete: 'All steps complete — enjoy your meal!',
+
+  // Recipe Editor
+  newRecipeTitle: 'New Recipe',
+  editRecipeTitle: 'Edit Recipe',
+  importFromUrlBanner: 'Import from URL or Paste Text',
+  photoOptionalLabel: 'Photo (optional)',
+  choosePhoto: 'Choose Photo',
+  takePhoto: 'Take Photo',
+  recipeTitleLabel: 'Recipe Title',
+  recipeTitlePlaceholder: 'e.g. Weeknight Shakshuka',
+  shortDescLabel: 'Short Note / Description',
+  shortDescPlaceholder: 'A brief note about this dish...',
+  servingsLabel: 'Servings',
+  prepMinLabel: 'Prep (min)',
+  cookMinLabel: 'Cook (min)',
+  tagsLabel: 'Tags',
+  customTagPlaceholder: 'Add custom tag...',
+  addIngredientBtn: 'Add Ingredient',
+  ingredientPlaceholder: (n: number) => `Ingredient ${n} (e.g. Eggs)`,
+  stepsHeading: 'Steps',
+  addStepBtn: 'Add Step',
+  stepPlaceholder: (n: number) => `Describe step ${n}...`,
+  titleRequiredTitle: 'Title Required',
+  titleRequiredMsg: 'Give your recipe a name before saving.',
+  ingredientRequiredTitle: 'Add an Ingredient',
+  ingredientRequiredMsg: 'Add at least one ingredient to save this recipe.',
+  saveFailedTitle: 'Save Failed',
+  photoErrorTitle: 'Photo Error',
+
+  // Import Recipe Modal
+  importModalTitle: 'Import Recipe',
+  importModalSub: 'Paste a recipe link or copy-pasted text — converted locally',
+  importTabUrl: 'From URL',
+  importTabText: 'Paste Text',
+  importUrlLabel: 'Recipe Web Address (URL)',
+  importUrlPlaceholder: 'https://www.lamaistas.lt/receptas/...',
+  importUrlHint:
+    'Works with most English and Lithuanian recipe websites using Schema.org metadata (no account or API key needed).',
+  importFetchBtn: 'Fetch & Convert Recipe',
+  importingBtn: 'Fetching recipe...',
+  importTextLabel: 'Paste Recipe Text',
+  importTextPlaceholder:
+    'Paste title, ingredients list, and instructions here...\n\nExample:\nShakshuka\nIngredients:\n4 eggs\n1 can crushed tomatoes\n\nInstructions:\n1. Heat oil in skillet...',
+  importParseBtn: 'Convert to Recipe',
+  importFailedTitle: 'Could Not Import Recipe',
+  importUrlEmptyMsg: 'Paste a website URL first.',
+  importTextEmptyMsg: 'Paste recipe text first.',
+  importSuccessNote: 'Imported! Review ingredients and tap Save.',
+
+  // Meal Plan
+  mealPlanTitle: 'Meal Plan',
+  mealPlanSubtitle: (n: number) => `${n} meal${n === 1 ? '' : 's'} planned`,
+  thisWeek: 'This Week',
+  backToThisWeek: 'Back to This Week',
+  skipPantryTitle: 'Skip Pantry items in stock',
+  skipPantryDesc: 'Merges quantities across meals & filters out what you already have',
+  generateGroceriesBtn: (n: number) =>
+    `Generate Grocery List (${n} meal${n === 1 ? '' : 's'})`,
+  noMealsPlannedTitle: 'No Meals Planned',
+  noMealsPlannedMsg:
+    'Add at least one meal to this week first to generate a grocery list.',
+  groceryListUpdatedTitle: 'Grocery List Updated',
+  groceryListAllInPantry: 'Everything you need is already in your Pantry!',
+  stayHere: 'Stay Here',
+  viewGroceries: 'View Groceries',
+  clearWeekTitle: 'Clear This Week',
+  clearWeekMsg: (n: number, range: string) =>
+    `Remove all ${n} planned meal${n === 1 ? '' : 's'} for ${range}?`,
+  clearWeekConfirm: 'Clear Week',
+  noRecipesPlanTitle: 'No recipes to plan yet',
+  noRecipesPlanDesc:
+    'Add a few recipes in the Recipes tab, then assign them to days or your weekly meal queue.',
+  createRecipeBtn: 'Create a Recipe',
+  flexibleQueueTitle: 'Flexible Queue',
+  flexibleQueueSub: 'Cook any day',
+  flexibleQueueEmpty:
+    'No flexible meals queued — add recipes without locking a day.',
+  todayBadge: 'Today',
+  planBtn: 'Plan',
+  pickRecipeTitle: 'Pick a Recipe',
+  pickRecipeEmptyNone: 'Add a recipe in the Recipes tab first.',
+  pickRecipeEmptySearch: 'No matching recipes found.',
+  addToMealPlanBtn: 'Add to Meal Plan',
+
+  // Pantry
+  pantryTitle: 'Pantry',
+  pantrySubtitle: (inStock: number, lowOut: number) =>
+    `${inStock} in stock • ${lowOut} low or out`,
+  searchPantryPlaceholder: 'Search pantry items...',
+  filterAll: (n: number) => `All (${n})`,
+  filterExpiring: (n: number) => `Expiring Soon (${n})`,
+  filterLowOut: (n: number) => `Low / Out (${n})`,
+  expiringSoonSection: 'Expiring Soon',
+  pantryEmptyTitle: 'Your pantry is empty',
+  pantryNoMatchTitle: 'Nothing matches this filter',
+  pantryEmptyDesc:
+    'Track what you have in your fridge, freezer, and cupboards to power Pantry Match and smart grocery lists.',
+  pantryNoMatchDesc: 'Try switching back to All or clearing your search.',
+  addPantryItemBtn: 'Add Pantry Item',
+  showAllBtn: 'Show All',
+  addedToGroceriesToast: (name: string) => `Added "${name}" to Groceries`,
+  addToListShort: '+ List',
+  editPantryTitle: 'Edit Pantry Item',
+  addToPantryTitle: 'Add to Pantry',
+  pantryNamePlaceholder: 'e.g. Greek Yogurt, Eggs, Basmati Rice',
+  storageLocationLabel: 'Storage Location',
+  stockLevelLabel: 'Stock Level',
+  qtyOptionalLabel: 'Quantity (optional)',
+  unitOptionalLabel: 'Unit (optional)',
+  expiryOptionalLabel: 'Expiration Date (optional)',
+  aisleRestockLabel: 'Grocery Aisle (when restocking)',
+  notesOptionalLabel: 'Notes (optional)',
+  notesPlaceholder: 'Opened Tuesday, brand preference...',
+  deleteItemBtn: 'Delete Item',
+  removePantryItemTitle: 'Remove Item',
+  removePantryItemMsg: (name: string) => `Remove "${name}" from your pantry?`,
+  invalidDateTitle: 'Invalid Date',
+  invalidDateMsg: 'Use YYYY-MM-DD format (e.g. 2026-12-01) or tap a preset.',
+  expiryPresetDays: (d: number) => `+${d}d`,
+  expiryPresetWeek: '+1w',
+  expiryPresetMonth: '+1mo',
+
+  // Settings
+  settingsTitle: 'Larder Settings',
+  settingsSub: '100% offline • stored locally on this device',
+  statRecipes: 'Recipes',
+  statPantry: 'Pantry',
+  statPlanned: 'Planned',
+  statGroceries: 'Groceries',
+  languageSection: 'Language / Kalba',
+  appearanceSection: 'Appearance',
+  backupSection: 'Local Backup & Restore',
+  exportJsonTitle: 'Export JSON Backup',
+  exportJsonDesc: 'Save or share a full local snapshot',
+  importJsonTitle: 'Import JSON Backup',
+  importJsonDesc: 'Restore from a previously exported file',
+  dataSection: 'Data',
+  loadSampleTitle: 'Load Sample Kitchen Data',
+  loadSampleDesc: '5 everyday recipes + common pantry staples',
+  clearAllTitle: 'Clear All Data',
+  clearAllDesc: 'Start fresh with an empty kitchen',
+  sharingUnavailableTitle: 'Sharing Unavailable',
+  sharingUnavailableMsg:
+    'Your device does not support the share sheet in this environment.',
+  exportFailedTitle: 'Export Failed',
+  restoreTitle: 'Restore from JSON Backup',
+  restoreMsg:
+    'Importing a backup will replace your current Larder recipes, pantry, meal plan, and grocery list. Continue?',
+  chooseFile: 'Choose File',
+  backupRestoredTitle: 'Backup Restored',
+  backupRestoredMsg: (recipes: number, pantry: number, groceries: number) =>
+    `Loaded ${recipes} recipes, ${pantry} pantry items, and ${groceries} grocery items.`,
+  restoreFailedTitle: 'Restore Failed',
+  loadSampleConfirmMsg:
+    'This replaces your current data with 5 everyday recipes, pantry staples, and a starter meal plan.',
+  sampleLoadedTitle: 'Sample Data Loaded',
+  sampleLoadedMsg: 'Your kitchen is stocked and ready.',
+  clearAllConfirmMsg:
+    'Permanently delete all recipes, pantry items, meal plans, and groceries from this device? This cannot be undone.',
+  clearEverythingBtn: 'Clear Everything',
+};
+
+const LT: typeof EN = {
+  // App & Loading
+  openingLarder: 'Atidaromas Larder...',
+  dbErrorTitle: 'Duomenų bazės klaida',
+
+  // Tabs
+  tabGroceries: 'Pirkiniai',
+  tabRecipes: 'Receptai',
+  tabMealPlan: 'Valgiaraštis',
+  tabPantry: 'Sandėliukas',
+
+  // Common
+  cancel: 'Atšaukti',
+  save: 'Išsaugoti',
+  saving: 'Saugoma...',
+  saveChanges: 'Išsaugoti pakeitimus',
+  add: 'Pridėti',
+  newLabel: 'Naujas',
+  clear: 'Išvalyti',
+  deleteLabel: 'Ištrinti',
+  ok: 'Gerai',
+  all: 'Visi',
+  errorTitle: 'Klaida',
+  servingsShort: 'porc.',
+  servingsWord: (n: number) => `${n} porc.`,
+  ingredientsWord: (n: number) => `${n} ingred.`,
+  minutesShort: (n: number) => `${n} min.`,
+
+  // Groceries
+  groceriesTitle: 'Pirkinių sąrašas',
+  groceriesSubtitlePickUp: (unchecked: number, checked: number) =>
+    `Liko nupirkti: ${unchecked}${checked > 0 ? ` • krepšelyje: ${checked}` : ''}`,
+  groceriesSubtitleAllChecked: (checked: number) => `Visi ${checked} pirkiniai pažymėti`,
+  groceriesSubtitleEmpty: 'Pirkinių krepšelis tuščias',
+  quickAddPlaceholder: 'Greitai pridėti (pvz. „4 kiaušiniai“ arba „Avokadai“)',
+  qtyPlaceholder: 'Kiekis',
+  unitPlaceholder: 'Vnt. (g, ml, skard...)',
+  mergedBanner: (name: string) => `Sujungta su esamu „${name}“`,
+  movedToPantryOne: '1 produktas perkeltas į sandėliuką',
+  movedToPantryMany: (n: number) => `Į sandėliuką perkelti produktai: ${n}`,
+  groceriesEmptyTitle: 'Pirkinių sąrašas tuščias',
+  groceriesEmptyDesc:
+    'Pridėkite prekių viršuje, sugeneruokite sąrašą iš valgiaraščio arba perkelkite pasibaigusius produktus iš sandėliuko.',
+  inCartSection: (n: number) => `Krepšelyje (${n})`,
+  moveCheckedToPantry: (n: number) => `Perkelti pažymėtus į sandėliuką (${n})`,
+  clearCheckedTitle: 'Išvalyti pažymėtus',
+  clearCheckedMsg: (n: number) =>
+    `Pašalinti ${n} pažymėt. produkt. neperkeliant jų į sandėliuką?`,
+  editGroceryTitle: 'Redaguoti pirkinį',
+  itemNameLabel: 'Pavadinimas',
+  itemNamePlaceholder: 'Produkto pavadinimas',
+  quantityLabel: 'Kiekis',
+  unitLabel: 'Matavimo vienetas',
+  storeAisleLabel: 'Parduotuvės skyrius',
+  addedFromLabel: (source: string) => `Pridėta iš: ${source}`,
+  removeFromList: 'Pašalinti iš sąrašo',
+  missingNameTitle: 'Trūksta pavadinimo',
+  missingNameMsg: 'Įveskite produkto pavadinimą.',
+  invalidQtyTitle: 'Neteisingas kiekis',
+  invalidQtyMsg: 'Įveskite teigiamą skaičių arba palikite tuščią.',
+
+  // Recipes
+  recipesTitle: 'Receptai',
+  recipesSubtitle: (n: number) => `Išsaugota receptų: ${n}`,
+  importBtn: 'Importuoti',
+  searchRecipesPlaceholder: 'Ieškoti receptų, žymų, ingredientų...',
+  sortMatch: 'Turimi',
+  sortRecent: 'Naujausi',
+  onHandBadge: (onHand: number, total: number) => `${onHand}/${total} turite`,
+  inPantryShort: (onHand: number, total: number) => `${onHand}/${total} sandėliuke`,
+  recipesEmptyTitle: 'Receptų knyga tuščia',
+  recipesNoMatchTitle: 'Receptų nerasta',
+  recipesEmptyDesc:
+    'Išsaugokite mėgstamus patiekalus arba importuokite receptą iš interneto nuorodos.',
+  recipesNoMatchDesc: 'Pabandykite išvalyti paiešką arba pasirinktą žymą.',
+  addFirstRecipe: 'Pridėti pirmą receptą',
+  clearFilters: 'Išvalyti filtrus',
+
+  // Recipe Detail
+  recipeNotFound: 'Receptas nerastas',
+  goBack: 'Grįžti',
+  prepLabel: (m: number) => `Paruoš. ${m} min.`,
+  cookLabel: (m: number) => `Gamin. ${m} min.`,
+  cookModeBtn: 'Gaminimo režimas',
+  addMissingBtn: (n: number) => (n > 0 ? `Pridėti trūkst. (${n})` : 'Viską turite'),
+  ingredientsHeading: 'Ingredientai',
+  instructionsHeading: 'Gaminimo eiga',
+  noInstructionsYet: 'Gaminimo žingsnių dar nėra.',
+  statusInStock: 'Turite',
+  statusLow: 'Baigiasi',
+  statusNeed: 'Reikia',
+  allSetTitle: 'Viską turite!',
+  allSetMsg: 'Visi šio recepto ingredientai jau yra jūsų sandėliuke.',
+  addedToGroceriesTitle: 'Pridėta į pirkinius',
+  addedSummary: (added: number, merged: number, skipped: number) => {
+    const parts: string[] = [];
+    if (added > 0) parts.push(`pridėta: ${added}`);
+    if (merged > 0) parts.push(`sujungta: ${merged}`);
+    if (skipped > 0) parts.push(`praleista turimų: ${skipped}`);
+    return `${parts.join(', ')}.`;
+  },
+  openGroceries: 'Atidaryti pirkinius',
+  deleteRecipeTitle: 'Ištrinti receptą',
+  deleteRecipeMsg: (title: string) =>
+    `Visam laikui ištrinti „${title}“? Šis receptas taip pat bus pašalintas iš valgiaraščio.`,
+
+  // Cook Mode
+  cookModeAwake: 'Gaminimo režimas • Ekranas neužges',
+  stepsProgress: (done: number, total: number) => `${done}/${total} žingsn.`,
+  cookIngredientsHeader: (servings: number) => `Ingredientai (${servings} porc.)`,
+  noStepsListed: 'Šiam receptui nėra nurodyta žingsnių.',
+  allStepsComplete: 'Visi žingsniai baigti — skanaus!',
+
+  // Recipe Editor
+  newRecipeTitle: 'Naujas receptas',
+  editRecipeTitle: 'Redaguoti receptą',
+  importFromUrlBanner: 'Importuoti iš nuorodos (URL) arba teksto',
+  photoOptionalLabel: 'Nuotrauka (nebūtina)',
+  choosePhoto: 'Iš galerijos',
+  takePhoto: 'Fotografuoti',
+  recipeTitleLabel: 'Recepto pavadinimas',
+  recipeTitlePlaceholder: 'pvz. Šakšuka vakarienei',
+  shortDescLabel: 'Trumpas aprašymas',
+  shortDescPlaceholder: 'Trumpa pastaba apie patiekalą...',
+  servingsLabel: 'Porcijos',
+  prepMinLabel: 'Paruoš. (min)',
+  cookMinLabel: 'Gamin. (min)',
+  tagsLabel: 'Žymos',
+  customTagPlaceholder: 'Pridėti savo žymą...',
+  addIngredientBtn: 'Pridėti ingredientą',
+  ingredientPlaceholder: (n: number) => `Ingredientas ${n} (pvz. Kiaušiniai)`,
+  stepsHeading: 'Gaminimo eiga',
+  addStepBtn: 'Pridėti žingsnį',
+  stepPlaceholder: (n: number) => `Aprašykite ${n}-ą žingsnį...`,
+  titleRequiredTitle: 'Trūksta pavadinimo',
+  titleRequiredMsg: 'Įveskite recepto pavadinimą prieš išsaugant.',
+  ingredientRequiredTitle: 'Pridėkite ingredientą',
+  ingredientRequiredMsg: 'Pridėkite bent vieną ingredientą.',
+  saveFailedTitle: 'Nepavyko išsaugoti',
+  photoErrorTitle: 'Nuotraukos klaida',
+
+  // Import Recipe Modal
+  importModalTitle: 'Importuoti receptą',
+  importModalSub: 'Įklijuokite interneto nuorodą arba tekstą — konvertuojama įrenginyje',
+  importTabUrl: 'Iš nuorodos (URL)',
+  importTabText: 'Įklijuoti tekstą',
+  importUrlLabel: 'Recepto nuoroda (URL)',
+  importUrlPlaceholder: 'https://www.lamaistas.lt/receptas/...',
+  importUrlHint:
+    'Veikia su daugeliu lietuviškų ir užsienio receptų svetainių (be paskyrų ir mokamų API).',
+  importFetchBtn: 'Atsisiųsti ir konvertuoti',
+  importingBtn: 'Skaitomas receptas...',
+  importTextLabel: 'Įklijuokite recepto tekstą',
+  importTextPlaceholder:
+    'Įklijuokite pavadinimą, ingredientus ir gaminimo eigą...\n\nPavyzdys:\nŠakšuka\nIngredientai:\n4 kiaušiniai\n1 skardinė smulkintų pomidorų\n\nGaminimas:\n1. Įkaitinkite aliejų keptuvėje...',
+  importParseBtn: 'Konvertuoti į receptą',
+  importFailedTitle: 'Nepavyko importuoti recepto',
+  importUrlEmptyMsg: 'Pirmiausia įklijuokite svetainės nuorodą.',
+  importTextEmptyMsg: 'Pirmiausia įklijuokite recepto tekstą.',
+  importSuccessNote: 'Importuota! Peržiūrėkite ingredientus ir spauskite „Išsaugoti“.',
+
+  // Meal Plan
+  mealPlanTitle: 'Valgiaraštis',
+  mealPlanSubtitle: (n: number) => `Suplanuota patiekalų: ${n}`,
+  thisWeek: 'Ši savaitė',
+  backToThisWeek: 'Grįžti į šią savaitę',
+  skipPantryTitle: 'Praleisti sandėliuke turimus produktus',
+  skipPantryDesc: 'Sujungia kiekius ir neįtraukia produktų, kurių jau turite',
+  generateGroceriesBtn: (n: number) => `Generuoti pirkinių sąrašą (${n})`,
+  noMealsPlannedTitle: 'Nėra suplanuotų patiekalų',
+  noMealsPlannedMsg:
+    'Pirmiausia pridėkite bent vieną patiekalą į šios savaitės valgiaraštį.',
+  groceryListUpdatedTitle: 'Pirkinių sąrašas atnaujintas',
+  groceryListAllInPantry: 'Visus reikalingus produktus jau turite sandėliuke!',
+  stayHere: 'Likti čia',
+  viewGroceries: 'Peržiūrėti pirkinius',
+  clearWeekTitle: 'Išvalyti šią savaitę',
+  clearWeekMsg: (n: number, range: string) =>
+    `Pašalinti visus ${n} suplanuotus patiekalus (${range})?`,
+  clearWeekConfirm: 'Išvalyti savaitę',
+  noRecipesPlanTitle: 'Dar nėra receptų',
+  noRecipesPlanDesc:
+    'Pridėkite kelis receptus skiltyje „Receptai“, tuomet suplanuokite savaitės valgiaraštį.',
+  createRecipeBtn: 'Sukurti receptą',
+  flexibleQueueTitle: 'Lankstus sąrašas',
+  flexibleQueueSub: 'Gaminti bet kurią dieną',
+  flexibleQueueEmpty:
+    'Nėra pridėtų patiekalų — pridėkite receptų nepriskirdami konkrečiai dienai.',
+  todayBadge: 'Šiandien',
+  planBtn: 'Pridėti',
+  pickRecipeTitle: 'Pasirinkti receptą',
+  pickRecipeEmptyNone: 'Pirmiausia pridėkite receptą skiltyje „Receptai“.',
+  pickRecipeEmptySearch: 'Atitinkančių receptų nerasta.',
+  addToMealPlanBtn: 'Pridėti į valgiaraštį',
+
+  // Pantry
+  pantryTitle: 'Sandėliukas',
+  pantrySubtitle: (inStock: number, lowOut: number) =>
+    `Yra: ${inStock} • baigiasi arba nėra: ${lowOut}`,
+  searchPantryPlaceholder: 'Ieškoti sandėliuke...',
+  filterAll: (n: number) => `Visi (${n})`,
+  filterExpiring: (n: number) => `Greitai baigsis (${n})`,
+  filterLowOut: (n: number) => `Baigiasi / Nėra (${n})`,
+  expiringSoonSection: 'Greitai baigsis galiojimas',
+  pantryEmptyTitle: 'Sandėliukas tuščias',
+  pantryNoMatchTitle: 'Pagal šį filtrą nieko nerasta',
+  pantryEmptyDesc:
+    'Sekite šaldytuvo, šaldiklio ir spintelių atsargas — tai padės matyti receptų atitikimą ir kurti tikslius pirkinių sąrašus.',
+  pantryNoMatchDesc: 'Pabandykite pasirinkti „Visi“ arba išvalyti paiešką.',
+  addPantryItemBtn: 'Pridėti produktą',
+  showAllBtn: 'Rodyti visus',
+  addedToGroceriesToast: (name: string) => `„${name}“ pridėta į pirkinius`,
+  addToListShort: '+ Sąrašas',
+  editPantryTitle: 'Redaguoti produktą',
+  addToPantryTitle: 'Pridėti į sandėliuką',
+  pantryNamePlaceholder: 'pvz. Graikiškas jogurtas, Kiaušiniai, Ryžiai',
+  storageLocationLabel: 'Laikymo vieta',
+  stockLevelLabel: 'Likutis',
+  qtyOptionalLabel: 'Kiekis (nebūtina)',
+  unitOptionalLabel: 'Vnt. (nebūtina)',
+  expiryOptionalLabel: 'Galiojimo data (nebūtina)',
+  aisleRestockLabel: 'Parduotuvės skyrius (papildymui)',
+  notesOptionalLabel: 'Pastabos (nebūtina)',
+  notesPlaceholder: 'Atidaryta antradienį...',
+  deleteItemBtn: 'Ištrinti produktą',
+  removePantryItemTitle: 'Pašalinti produktą',
+  removePantryItemMsg: (name: string) => `Pašalinti „${name}“ iš sandėliuko?`,
+  invalidDateTitle: 'Neteisinga data',
+  invalidDateMsg: 'Naudokite formatą MMMM-MM-DD (pvz. 2026-12-01) arba paspauskite mygtuką.',
+  expiryPresetDays: (d: number) => `+${d} d.`,
+  expiryPresetWeek: '+1 sav.',
+  expiryPresetMonth: '+1 mėn.',
+
+  // Settings
+  settingsTitle: 'Larder nustatymai',
+  settingsSub: '100% be interneto • saugoma tik šiame įrenginyje',
+  statRecipes: 'Receptai',
+  statPantry: 'Sandėliukas',
+  statPlanned: 'Suplanuota',
+  statGroceries: 'Pirkiniai',
+  languageSection: 'Kalba / Language',
+  appearanceSection: 'Išvaizda',
+  backupSection: 'Atsarginė kopija (JSON)',
+  exportJsonTitle: 'Eksportuoti JSON kopiją',
+  exportJsonDesc: 'Išsaugoti arba pasidalinti visais duomenimis',
+  importJsonTitle: 'Importuoti JSON kopiją',
+  importJsonDesc: 'Atkurti iš anksčiau išsaugoto failo',
+  dataSection: 'Duomenys',
+  loadSampleTitle: 'Įkelti pavyzdinius duomenis',
+  loadSampleDesc: '5 kasdieniai receptai ir pagrindiniai produktai',
+  clearAllTitle: 'Išvalyti visus duomenis',
+  clearAllDesc: 'Pradėti nuo tuščios virtuvės',
+  sharingUnavailableTitle: 'Dalijimasis nepasiekiamas',
+  sharingUnavailableMsg: 'Šiame įrenginyje dalijimosi funkcija nepalaikoma.',
+  exportFailedTitle: 'Eksportuoti nepavyko',
+  restoreTitle: 'Atkurti iš JSON kopijos',
+  restoreMsg:
+    'Importavus atsarginę kopiją bus pakeisti dabartiniai receptai, sandėliukas, valgiaraštis ir pirkinių sąrašas. Tęsti?',
+  chooseFile: 'Pasirinkti failą',
+  backupRestoredTitle: 'Duomenys atkurti',
+  backupRestoredMsg: (recipes: number, pantry: number, groceries: number) =>
+    `Įkelta: ${recipes} recept., ${pantry} sandėliuko prod., ${groceries} pirkinių.`,
+  restoreFailedTitle: 'Atkurti nepavyko',
+  loadSampleConfirmMsg:
+    'Dabartiniai duomenys bus pakeisti 5 kasdieniais receptais, sandėliuko atsargomis ir pavyzdiniu valgiaraščiu.',
+  sampleLoadedTitle: 'Pavyzdiniai duomenys įkelti',
+  sampleLoadedMsg: 'Virtuvė paruošta darbui.',
+  clearAllConfirmMsg:
+    'Visam laikui ištrinti visus receptus, sandėliuko prekes, valgiaraštį ir pirkinių sąrašą? Šio veiksmo atšaukti negalima.',
+  clearEverythingBtn: 'Ištrinti viską',
+};
+
+export type Translations = typeof EN;
+
+export const TRANSLATIONS: Record<Language, Translations> = {
+  en: EN,
+  lt: LT,
+};
