@@ -2,6 +2,7 @@
   "expo": {
     "name": "Larder",
     "slug": "larder",
+    "owner": "emilijus",
     "scheme": "larder",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -23,7 +24,10 @@
         "backgroundColor": "#4A7C59",
         "foregroundImage": "./assets/android-icon-foreground.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -39,6 +43,16 @@
           "cameraPermission": "Allow Larder to take photos of your recipes."
         }
       ]
-    ]
+    ],
+    "extra": {
+      "router": {
+        "asyncRoutes": {
+          "web": true
+        }
+      },
+      "eas": {
+        "projectId": "2a1cea4a-480d-4bea-a7db-0777c4e4769e"
+      }
+    }
   }
 }
