@@ -54,7 +54,6 @@ function SettingsContent({ onClose }: { onClose: () => void }) {
     mealPlanEntries,
     exportBackup,
     importBackup,
-    loadSampleData,
     clearAllData,
   } = useLarder();
   const insets = useSafeAreaInsets();
@@ -119,30 +118,6 @@ function SettingsContent({ onClose }: { onClose: () => void }) {
             Alert.alert(
               t.restoreFailedTitle,
               e instanceof Error ? e.message : t.restoreFailedTitle
-            );
-          } finally {
-            setBusyAction(null);
-          }
-        },
-      },
-    ]);
-  };
-
-  const handleLoadSample = () => {
-    Alert.alert(t.loadSampleTitle, t.loadSampleConfirmMsg, [
-      { text: t.cancel, style: 'cancel' },
-      {
-        text: t.loadSampleTitle,
-        onPress: async () => {
-          try {
-            setBusyAction('sample');
-            await loadSampleData();
-            hapticSuccess();
-            Alert.alert(t.sampleLoadedTitle, t.sampleLoadedMsg);
-          } catch (e) {
-            Alert.alert(
-              t.errorTitle,
-              e instanceof Error ? e.message : t.errorTitle
             );
           } finally {
             setBusyAction(null);
@@ -364,27 +339,6 @@ function SettingsContent({ onClose }: { onClose: () => void }) {
           {/* Data management */}
           <Text style={styles.sectionTitle}>{t.dataSection}</Text>
           <View style={styles.card}>
-            <Pressable
-              disabled={busyAction !== null}
-              onPress={handleLoadSample}
-              style={({ pressed }) => [styles.rowBtn, pressed && styles.rowPressed]}
-            >
-              <View style={[styles.rowIcon, { backgroundColor: colors.primarySoft }]}>
-                <Ionicons name="sparkles-outline" size={20} color={colors.primary} />
-              </View>
-              <View style={styles.rowText}>
-                <Text style={styles.rowTitle}>{t.loadSampleTitle}</Text>
-                <Text style={styles.rowDesc}>{t.loadSampleDesc}</Text>
-              </View>
-              {busyAction === 'sample' ? (
-                <ActivityIndicator size="small" color={colors.primary} />
-              ) : (
-                <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-              )}
-            </Pressable>
-
-            <View style={styles.divider} />
-
             <Pressable
               disabled={busyAction !== null}
               onPress={handleClearAll}

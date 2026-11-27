@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Image,
@@ -33,6 +33,7 @@ import type {
   RecipeInput,
 } from '@/types/larder';
 import { hapticLight, hapticSelection, hapticSuccess } from '@/utils/haptics';
+import { isSafeHttpUrl } from '@/utils/recipeParser';
 
 interface DraftIngredient {
   key: string;
@@ -120,6 +121,24 @@ export default function RecipeEditorScreen() {
   );
 
   const [saving, setSaving] = useState(false);
+  const savedRef = useRef(false);
+  const pickedPhotosRef = useRef<string[]>(newlyPickedPhotos);
+
+  useEffect(() => {
+    pickedPhotosRef.current = newlyPickedPhotos;
+  }, [newlyPickedPhotos]);
+
+  // Clean up any newly picked/downloaded photos if the modal is dismissed via swipe or hardware back
+  useEffect(() => {
+    return () => {
+      if (!savedRef.current) {
+        for (const tempUri of pickedPhotosRef.current) {
+          deleteLocalPhoto(tempUri);
+        }
+        setPendingImportedRecipe(null);
+      }
+    };
+  }, [setPendingImportedRecipe]);
 
   const applyImportedDraft = (draft: RecipeInput) => {
     setTitle(draft.title);
@@ -179,8 +198,8 @@ export default function RecipeEditorScreen() {
     try {
       const uri =
         source === 'library'
-          ? await pickRecipePhotoFromLibrary()
-          : await takeRecipePhotoWithCamera();
+          ? await pickRecipePhotoFromLibrary(language)
+          : await takeRecipePhotoWithCamera(language);
       if (uri) {
         hapticSuccess();
         setNewlyPickedPhotos((prev) => [...prev, uri]);
@@ -252,6 +271,12 @@ export default function RecipeEditorScreen() {
       return;
     }
 
+    const cleanSourceUrl = sourceUrl.trim();
+    if (cleanSourceUrl && !isSafeHttpUrl(cleanSourceUrl)) {
+      Alert.alert(t.invalidUrlTitle, t.invalidUrlMsg);
+      return;
+    }
+
     const cleanSteps = steps.map((s) => s.text.trim()).filter(Boolean);
 
     try {
@@ -263,7 +288,7 @@ export default function RecipeEditorScreen() {
         prepMinutes,
         cookMinutes,
         photoUri,
-        sourceUrl: sourceUrl.trim() || null,
+        sourceUrl: cleanSourceUrl || null,
         tags,
         ingredients: cleanIngredients,
         steps: cleanSteps,
@@ -273,6 +298,7 @@ export default function RecipeEditorScreen() {
       } else {
         await addRecipe(payload);
       }
+      savedRef.current = true;
       for (const tempUri of newlyPickedPhotos) {
         if (tempUri !== photoUri) {
           deleteLocalPhoto(tempUri);

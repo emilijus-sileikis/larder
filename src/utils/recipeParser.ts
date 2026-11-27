@@ -301,21 +301,55 @@ function extractInstructions(raw: unknown): string[] {
   return [];
 }
 
-function extractImageUrl(raw: unknown): string | null {
+export function isSafeHttpUrl(raw: string | null | undefined): boolean {
+  if (!raw || typeof raw !== 'string') return false;
+  try {
+    const parsed = new URL(raw.trim());
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+export function resolveSafeImageUrl(
+  candidate: string,
+  sourceUrl: string | null
+): string | null {
+  const trimmed = candidate.trim();
+  if (!trimmed) return null;
+  if (isSafeHttpUrl(trimmed)) return trimmed;
+  if (sourceUrl && isSafeHttpUrl(sourceUrl)) {
+    try {
+      const resolved = new URL(trimmed, sourceUrl);
+      if (resolved.protocol === 'http:' || resolved.protocol === 'https:') {
+        return resolved.toString();
+      }
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function extractImageUrl(raw: unknown, sourceUrl: string | null = null): string | null {
   if (!raw) return null;
-  if (typeof raw === 'string' && /^https?:\/\//i.test(raw)) return raw;
+  if (typeof raw === 'string') return resolveSafeImageUrl(raw, sourceUrl);
   if (Array.isArray(raw)) {
     for (const item of raw) {
-      const found = extractImageUrl(item);
+      const found = extractImageUrl(item, sourceUrl);
       if (found) return found;
     }
     return null;
   }
   if (typeof raw === 'object') {
     const obj = raw as Record<string, unknown>;
-    if (typeof obj.url === 'string' && /^https?:\/\//i.test(obj.url)) return obj.url;
-    if (typeof obj.contentUrl === 'string' && /^https?:\/\//i.test(obj.contentUrl)) {
-      return obj.contentUrl;
+    if (typeof obj.url === 'string') {
+      const resolved = resolveSafeImageUrl(obj.url, sourceUrl);
+      if (resolved) return resolved;
+    }
+    if (typeof obj.contentUrl === 'string') {
+      const resolved = resolveSafeImageUrl(obj.contentUrl, sourceUrl);
+      if (resolved) return resolved;
     }
   }
   return null;
@@ -445,7 +479,8 @@ export function extractRecipeFromHtml(
 
     const steps = extractInstructions(node.recipeInstructions);
     const imageUrl =
-      extractImageUrl(node.image) ?? extractMetaContent(html, 'og:image');
+      extractImageUrl(node.image, sourceUrl) ??
+      extractImageUrl(extractMetaContent(html, 'og:image'), sourceUrl);
 
     if (ingredients.length > 0 || steps.length > 0) {
       return {
@@ -500,7 +535,7 @@ export function extractRecipeFromHtml(
       extractMetaContent(html, 'og:title') ??
       (titleTagMatch ? decodeHtmlEntities(titleTagMatch[1]) : 'Imported Recipe');
     const description = (extractMetaContent(html, 'og:description') ?? '').slice(0, 260);
-    const imageUrl = extractMetaContent(html, 'og:image');
+    const imageUrl = extractImageUrl(extractMetaContent(html, 'og:image'), sourceUrl);
 
     return {
       recipe: {
@@ -540,7 +575,7 @@ export function extractRecipeFromHtml(
       (h1Match ? decodeHtmlEntities(h1Match[1]) : null) ??
       (titleTagMatch ? decodeHtmlEntities(titleTagMatch[1]) : 'Imported Recipe');
     const description = (extractMetaContent(html, 'og:description') ?? '').slice(0, 260);
-    const imageUrl = extractMetaContent(html, 'og:image');
+    const imageUrl = extractImageUrl(extractMetaContent(html, 'og:image'), sourceUrl);
     const ingredients = heuristicIngLines
       .map(parseRecipeIngredientLine)
       .filter((i): i is RecipeIngredientInput => i !== null);

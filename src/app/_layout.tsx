@@ -11,7 +11,8 @@ const isExpoGo = Constants.appOwnership === 'expo';
 
 function extractUrlFromText(text: string): string | undefined {
   const match = text.match(/https?:\/\/[^\s"'<>]+/i);
-  return match ? match[0] : undefined;
+  if (!match) return undefined;
+  return match[0].replace(/[.,!?;:)\]]+$/, '');
 }
 
 function ShareIntentBridge() {

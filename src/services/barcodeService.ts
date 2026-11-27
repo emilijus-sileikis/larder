@@ -41,6 +41,18 @@ export async function lookupBarcodeProduct(
   lang: Language = 'en'
 ): Promise<BarcodeLookupResult> {
   const barcode = rawCode.trim();
+  if (!/^[A-Za-z0-9._-]{3,48}$/.test(barcode)) {
+    return {
+      barcode,
+      found: false,
+      source: 'none',
+      name: '',
+      category: 'pantry_dry',
+      location: 'pantry',
+      quantity: null,
+      unit: '',
+    };
+  }
   const local = await getLocalBarcodeProduct(barcode);
   if (local) {
     return {

@@ -176,7 +176,9 @@ export default function MealPlanScreen() {
             >
               <Ionicons name="remove" size={14} color={colors.text} />
             </Pressable>
-            <Text style={styles.miniStepVal}>{entry.servings}s</Text>
+            <Text style={styles.miniStepVal}>
+              {entry.servings} {t.servingsShort}
+            </Text>
             <Pressable
               onPress={() => {
                 hapticSelection();

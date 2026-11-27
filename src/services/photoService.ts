@@ -1,6 +1,7 @@
 import { Alert } from 'react-native';
 import { Directory, File, Paths } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
+import type { Language } from '@/i18n/translations';
 
 function getPhotosDir(): Directory {
   const dir = new Directory(Paths.document, 'recipe-photos');
@@ -32,12 +33,16 @@ async function persistPhotoUri(sourceUri: string): Promise<string> {
   return destFile.uri;
 }
 
-export async function pickRecipePhotoFromLibrary(): Promise<string | null> {
+export async function pickRecipePhotoFromLibrary(
+  lang: Language = 'en'
+): Promise<string | null> {
   const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (!perm.granted) {
     Alert.alert(
-      'Photo Access Needed',
-      'Enable photo library access in your device settings to attach recipe photos.'
+      lang === 'lt' ? 'Reikalinga prieiga prie nuotraukų' : 'Photo Access Needed',
+      lang === 'lt'
+        ? 'Įjunkite nuotraukų galerijos prieigą įrenginio nustatymuose.'
+        : 'Enable photo library access in your device settings to attach recipe photos.'
     );
     return null;
   }
@@ -55,12 +60,16 @@ export async function pickRecipePhotoFromLibrary(): Promise<string | null> {
   return persistPhotoUri(result.assets[0].uri);
 }
 
-export async function takeRecipePhotoWithCamera(): Promise<string | null> {
+export async function takeRecipePhotoWithCamera(
+  lang: Language = 'en'
+): Promise<string | null> {
   const perm = await ImagePicker.requestCameraPermissionsAsync();
   if (!perm.granted) {
     Alert.alert(
-      'Camera Access Needed',
-      'Enable camera access in your device settings to photograph recipes.'
+      lang === 'lt' ? 'Reikalinga kameros prieiga' : 'Camera Access Needed',
+      lang === 'lt'
+        ? 'Įjunkite kameros prieigą įrenginio nustatymuose, kad galėtumėte fotografuoti receptus.'
+        : 'Enable camera access in your device settings to photograph recipes.'
     );
     return null;
   }

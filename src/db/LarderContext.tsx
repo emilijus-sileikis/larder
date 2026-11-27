@@ -7,7 +7,6 @@ import React, {
   useState,
 } from 'react';
 import { useColorScheme } from 'react-native';
-import { buildSamplePantryItems, buildSampleRecipes } from '@/data/sampleData';
 import * as DB from '@/db/database';
 import {
   TRANSLATIONS,
@@ -44,7 +43,6 @@ import type {
   StockLevel,
   ThemeMode,
 } from '@/types/larder';
-import { getWeekStartIso } from '@/utils/dates';
 import {
   computeRecipePantryMatch,
   findMatchingPantryItem,
@@ -140,8 +138,7 @@ interface LarderContextValue {
   moveCheckedToPantry: () => Promise<number>;
   clearChecked: () => Promise<number>;
 
-  // Sample Data / Backup / Reset
-  loadSampleData: () => Promise<void>;
+  // Backup / Reset
   clearAllData: () => Promise<void>;
   exportBackup: (options?: { includePhotos?: boolean }) => Promise<boolean>;
   importBackup: () => Promise<{
@@ -221,151 +218,6 @@ export function LarderProvider({ children }: { children: React.ReactNode }) {
     setMealPlanEntries(plans);
     setGroceryItems(groceries);
     setStapleHistory(history);
-  }, []);
-
-  const seedInitialSampleData = useCallback(async (seedLang: Language = 'en') => {
-    const samplePantry = buildSamplePantryItems(seedLang);
-    const sampleRecipes = buildSampleRecipes(seedLang);
-    const weekStart = getWeekStartIso();
-    const isLt = seedLang === 'lt';
-
-    await DB.replaceAllWithBackup({
-      version: 1,
-      app: 'Larder',
-      exportedAt: new Date().toISOString(),
-      pantryItems: samplePantry,
-      recipes: sampleRecipes,
-      mealPlanEntries: [
-        {
-          weekStart,
-          dayIndex: 0,
-          mealSlot: 'dinner',
-          recipeTitle: sampleRecipes[0].title,
-          recipeIndex: 0,
-          servings: 2,
-          notes: '',
-        },
-        {
-          weekStart,
-          dayIndex: 2,
-          mealSlot: 'dinner',
-          recipeTitle: sampleRecipes[1].title,
-          recipeIndex: 1,
-          servings: 4,
-          notes: isLt ? 'Dviguba porcija pietums' : 'Double batch for lunches',
-        },
-        {
-          weekStart,
-          dayIndex: 4,
-          mealSlot: 'dinner',
-          recipeTitle: sampleRecipes[3].title,
-          recipeIndex: 3,
-          servings: 3,
-          notes: '',
-        },
-      ],
-      groceryItems: isLt
-        ? [
-            {
-              name: 'Kiaušiniai',
-              quantity: 6,
-              unit: '',
-              category: 'dairy_eggs',
-              sourceNote: `${sampleRecipes[0].title}, ${sampleRecipes[3].title}`,
-              checked: false,
-            },
-            {
-              name: 'Fetos sūris',
-              quantity: 60,
-              unit: 'g',
-              category: 'dairy_eggs',
-              sourceNote: sampleRecipes[0].title,
-              checked: false,
-            },
-            {
-              name: 'Raugo duona',
-              quantity: 1,
-              unit: 'loaf',
-              category: 'bakery',
-              sourceNote: sampleRecipes[0].title,
-              checked: false,
-            },
-            {
-              name: 'Vištienos šlaunelių mėsa',
-              quantity: 600,
-              unit: 'g',
-              category: 'meat_fish',
-              sourceNote: sampleRecipes[1].title,
-              checked: false,
-            },
-            {
-              name: 'Kietas tofu',
-              quantity: 300,
-              unit: 'g',
-              category: 'dairy_eggs',
-              sourceNote: sampleRecipes[3].title,
-              checked: false,
-            },
-            {
-              name: 'Medus',
-              quantity: 1,
-              unit: 'jar',
-              category: 'pantry_dry',
-              sourceNote: 'Papildymas iš sandėliuko',
-              checked: false,
-            },
-          ]
-        : [
-            {
-              name: 'Eggs',
-              quantity: 6,
-              unit: '',
-              category: 'dairy_eggs',
-              sourceNote: 'Weeknight Shakshuka, Crispy Tofu & Pea Fried Rice',
-              checked: false,
-            },
-            {
-              name: 'Feta Cheese',
-              quantity: 60,
-              unit: 'g',
-              category: 'dairy_eggs',
-              sourceNote: 'Weeknight Shakshuka',
-              checked: false,
-            },
-            {
-              name: 'Sourdough Bread',
-              quantity: 1,
-              unit: 'loaf',
-              category: 'bakery',
-              sourceNote: 'Weeknight Shakshuka',
-              checked: false,
-            },
-            {
-              name: 'Chicken Thighs',
-              quantity: 600,
-              unit: 'g',
-              category: 'meat_fish',
-              sourceNote: 'Lemon Garlic Chicken & Rice Bowl',
-              checked: false,
-            },
-            {
-              name: 'Firm Tofu',
-              quantity: 300,
-              unit: 'g',
-              category: 'dairy_eggs',
-              sourceNote: 'Crispy Tofu & Pea Fried Rice',
-              checked: false,
-            },
-            {
-              name: 'Honey',
-              quantity: 1,
-              unit: 'jar',
-              category: 'pantry_dry',
-              sourceNote: 'Restock from Pantry',
-              checked: false,
-            },
-          ],
-    });
   }, []);
 
   useEffect(() => {
@@ -456,12 +308,20 @@ export function LarderProvider({ children }: { children: React.ReactNode }) {
     [refreshPantry]
   );
 
-  const setPantryStock = useCallback(async (id: number, stockLevel: StockLevel) => {
-    setPantryItems((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, stockLevel } : item))
-    );
-    await DB.updatePantryStockLevel(id, stockLevel);
-  }, []);
+  const setPantryStock = useCallback(
+    async (id: number, stockLevel: StockLevel) => {
+      setPantryItems((prev) =>
+        prev.map((item) => (item.id === id ? { ...item, stockLevel } : item))
+      );
+      try {
+        await DB.updatePantryStockLevel(id, stockLevel);
+      } catch (e) {
+        await refreshPantry();
+        throw e;
+      }
+    },
+    [refreshPantry]
+  );
 
   const applyCookedPantryUpdates = useCallback(
     async (updates: { id: number; stockLevel: StockLevel }[]) => {
@@ -474,15 +334,28 @@ export function LarderProvider({ children }: { children: React.ReactNode }) {
             : item
         )
       );
-      await DB.batchUpdatePantryStockLevels(updates);
+      try {
+        await DB.batchUpdatePantryStockLevels(updates);
+      } catch (e) {
+        await refreshPantry();
+        throw e;
+      }
     },
-    []
+    [refreshPantry]
   );
 
-  const removePantryItem = useCallback(async (id: number) => {
-    setPantryItems((prev) => prev.filter((item) => item.id !== id));
-    await DB.deletePantryItem(id);
-  }, []);
+  const removePantryItem = useCallback(
+    async (id: number) => {
+      setPantryItems((prev) => prev.filter((item) => item.id !== id));
+      try {
+        await DB.deletePantryItem(id);
+      } catch (e) {
+        await refreshPantry();
+        throw e;
+      }
+    },
+    [refreshPantry]
+  );
 
   const restorePantryItem = useCallback(
     async (item: PantryItem) => {
@@ -627,18 +500,34 @@ export function LarderProvider({ children }: { children: React.ReactNode }) {
     [refreshMealPlan]
   );
 
-  const setMealPlanServings = useCallback(async (id: number, servings: number) => {
-    const clamped = Math.max(1, Math.round(servings));
-    setMealPlanEntries((prev) =>
-      prev.map((e) => (e.id === id ? { ...e, servings: clamped } : e))
-    );
-    await DB.updateMealPlanServings(id, clamped);
-  }, []);
+  const setMealPlanServings = useCallback(
+    async (id: number, servings: number) => {
+      const clamped = Math.max(1, Math.round(servings));
+      setMealPlanEntries((prev) =>
+        prev.map((e) => (e.id === id ? { ...e, servings: clamped } : e))
+      );
+      try {
+        await DB.updateMealPlanServings(id, clamped);
+      } catch (e) {
+        await refreshMealPlan();
+        throw e;
+      }
+    },
+    [refreshMealPlan]
+  );
 
-  const removeMealPlanEntry = useCallback(async (id: number) => {
-    setMealPlanEntries((prev) => prev.filter((e) => e.id !== id));
-    await DB.deleteMealPlanEntry(id);
-  }, []);
+  const removeMealPlanEntry = useCallback(
+    async (id: number) => {
+      setMealPlanEntries((prev) => prev.filter((e) => e.id !== id));
+      try {
+        await DB.deleteMealPlanEntry(id);
+      } catch (e) {
+        await refreshMealPlan();
+        throw e;
+      }
+    },
+    [refreshMealPlan]
+  );
 
   const clearWeekMealPlan = useCallback(
     async (weekStart: string) => {
@@ -730,17 +619,33 @@ export function LarderProvider({ children }: { children: React.ReactNode }) {
     [refreshGroceries]
   );
 
-  const toggleGroceryChecked = useCallback(async (id: number, checked: boolean) => {
-    setGroceryItems((prev) =>
-      prev.map((g) => (g.id === id ? { ...g, checked } : g))
-    );
-    await DB.toggleGroceryItemChecked(id, checked);
-  }, []);
+  const toggleGroceryChecked = useCallback(
+    async (id: number, checked: boolean) => {
+      setGroceryItems((prev) =>
+        prev.map((g) => (g.id === id ? { ...g, checked } : g))
+      );
+      try {
+        await DB.toggleGroceryItemChecked(id, checked);
+      } catch (e) {
+        await refreshGroceries();
+        throw e;
+      }
+    },
+    [refreshGroceries]
+  );
 
-  const removeGroceryItem = useCallback(async (id: number) => {
-    setGroceryItems((prev) => prev.filter((g) => g.id !== id));
-    await DB.deleteGroceryItem(id);
-  }, []);
+  const removeGroceryItem = useCallback(
+    async (id: number) => {
+      setGroceryItems((prev) => prev.filter((g) => g.id !== id));
+      try {
+        await DB.deleteGroceryItem(id);
+      } catch (e) {
+        await refreshGroceries();
+        throw e;
+      }
+    },
+    [refreshGroceries]
+  );
 
   const restoreGroceryItem = useCallback(
     async (item: GroceryItem) => {
@@ -770,19 +675,14 @@ export function LarderProvider({ children }: { children: React.ReactNode }) {
     return removed;
   }, [refreshGroceries]);
 
-  // Sample / Backup / Clear
-  const loadSampleData = useCallback(async () => {
-    await seedInitialSampleData(language);
-    await DB.setSetting('has_initialized', '1');
-    await refreshAll();
-  }, [language, seedInitialSampleData, refreshAll]);
-
+  // Backup / Clear
   const clearAllData = useCallback(async () => {
     for (const r of recipes) {
       if (r.photoUri) deleteLocalPhoto(r.photoUri);
     }
     await DB.clearAllLarderData();
-    await DB.setSetting('has_initialized', '1');
+    await cancelAllExpiryNotifications();
+    setLastBackupAt(null);
     await refreshAll();
   }, [recipes, refreshAll]);
 
@@ -816,7 +716,6 @@ export function LarderProvider({ children }: { children: React.ReactNode }) {
     const parsed = parseLarderBackupJson(text);
     const hydrated = await materializeBackupPhotos(parsed);
     await DB.replaceAllWithBackup(hydrated);
-    await DB.setSetting('has_initialized', '1');
     await refreshAll();
     return {
       imported: true,
@@ -876,7 +775,6 @@ export function LarderProvider({ children }: { children: React.ReactNode }) {
       restoreGroceryItem,
       moveCheckedToPantry,
       clearChecked,
-      loadSampleData,
       clearAllData,
       exportBackup,
       importBackup,
@@ -928,7 +826,6 @@ export function LarderProvider({ children }: { children: React.ReactNode }) {
       restoreGroceryItem,
       moveCheckedToPantry,
       clearChecked,
-      loadSampleData,
       clearAllData,
       exportBackup,
       importBackup,

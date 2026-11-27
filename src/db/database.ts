@@ -1035,6 +1035,9 @@ export async function clearAllLarderData(): Promise<void> {
     await db.runAsync('DELETE FROM recipes');
     await db.runAsync('DELETE FROM grocery_items');
     await db.runAsync('DELETE FROM pantry_items');
+    await db.runAsync('DELETE FROM item_history');
+    await db.runAsync('DELETE FROM barcode_catalog');
+    await db.runAsync("DELETE FROM app_settings WHERE key = 'last_backup_at'");
   });
 }
 

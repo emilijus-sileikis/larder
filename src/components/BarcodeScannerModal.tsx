@@ -63,7 +63,10 @@ function BarcodeScannerContent({
     <View style={styles.root}>
       {!permission?.granted ? (
         <View style={[styles.permWrap, { paddingTop: Math.max(insets.top, 20) }]}>
-          <Pressable onPress={onClose} style={styles.permClose}>
+          <Pressable
+            onPress={onClose}
+            style={[styles.permClose, { top: Math.max(insets.top, 16) + 8 }]}
+          >
             <Ionicons name="close" size={22} color={colors.text} />
           </Pressable>
           <View style={styles.permCard}>

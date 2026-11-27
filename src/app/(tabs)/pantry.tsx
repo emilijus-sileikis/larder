@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Pressable,
   SectionList,
@@ -78,6 +78,12 @@ export default function PantryScreen() {
     undoItem?: PantryItem;
   } | null>(null);
   const snackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (snackTimerRef.current) clearTimeout(snackTimerRef.current);
+    };
+  }, []);
 
   const showSnackbar = (message: string, undoItem?: PantryItem) => {
     if (snackTimerRef.current) clearTimeout(snackTimerRef.current);

@@ -2,8 +2,12 @@ import { Directory, File, Paths } from 'expo-file-system';
 import type { RecipeInput } from '@/types/larder';
 import {
   extractRecipeFromHtml,
+  isSafeHttpUrl,
   parseRecipeFromText,
 } from '@/utils/recipeParser';
+
+const MAX_HTML_BYTES = 1_500_000;
+const MAX_CONTENT_LENGTH = 3_000_000;
 
 function getPhotosDir(): Directory {
   const dir = new Directory(Paths.document, 'recipe-photos');
@@ -14,6 +18,7 @@ function getPhotosDir(): Directory {
 }
 
 async function downloadRecipePhotoLocally(imageUrl: string): Promise<string | null> {
+  if (!isSafeHttpUrl(imageUrl)) return null;
   try {
     const extMatch = imageUrl.match(/\.(jpg|jpeg|png|webp)(?:\?|$)/i);
     const ext = (extMatch ? extMatch[1] : 'jpg').toLowerCase();
@@ -67,7 +72,19 @@ export async function importRecipeFromUrl(rawUrl: string): Promise<RecipeInput> 
     if (!response.ok) {
       throw new Error(`Website returned HTTP ${response.status}. Try copying the text and using "Paste Text".`);
     }
-    html = await response.text();
+    const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
+    if (
+      contentType &&
+      /^(?:video|audio|image)\/|application\/(?:pdf|octet-stream|zip)/i.test(contentType)
+    ) {
+      throw new Error('That link points to a media or binary file instead of a recipe webpage.');
+    }
+    const contentLength = Number(response.headers.get('content-length') ?? 0);
+    if (Number.isFinite(contentLength) && contentLength > MAX_CONTENT_LENGTH) {
+      throw new Error('That webpage is too large to parse. Try copying the recipe text instead.');
+    }
+    const rawHtml = await response.text();
+    html = rawHtml.length > MAX_HTML_BYTES ? rawHtml.slice(0, MAX_HTML_BYTES) : rawHtml;
   } catch (e) {
     if (e instanceof Error && e.name === 'AbortError') {
       throw new Error('Request timed out. Check your internet connection or use "Paste Text".');

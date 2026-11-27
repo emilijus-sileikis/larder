@@ -18,6 +18,7 @@ import { useLarder } from '@/db/LarderContext';
 import type { ThemeColors } from '@/theme/colors';
 import { hapticSelection, hapticSuccess } from '@/utils/haptics';
 import { formatIngredientLine } from '@/utils/ingredients';
+import { isSafeHttpUrl } from '@/utils/recipeParser';
 
 const MULTIPLIERS = [0.5, 1, 1.5, 2, 3];
 
@@ -106,9 +107,9 @@ export default function RecipeDetailScreen() {
   };
 
   const handleOpenSource = async () => {
-    if (!recipe.sourceUrl) return;
+    if (!isSafeHttpUrl(recipe.sourceUrl)) return;
     try {
-      await Linking.openURL(recipe.sourceUrl);
+      await Linking.openURL(recipe.sourceUrl!);
     } catch {
       // Ignore malformed url
     }
@@ -165,7 +166,7 @@ export default function RecipeDetailScreen() {
           <Text style={styles.description}>{recipe.description}</Text>
         ) : null}
 
-        {recipe.sourceUrl ? (
+        {isSafeHttpUrl(recipe.sourceUrl) ? (
           <Pressable onPress={handleOpenSource} style={styles.sourceLink}>
             <Ionicons name="open-outline" size={14} color={colors.primary} />
             <Text style={styles.sourceLinkText} numberOfLines={1}>
@@ -239,7 +240,7 @@ export default function RecipeDetailScreen() {
               <Pressable
                 onPress={() => {
                   hapticSelection();
-                  setTargetServingsOverride(Math.max(1, Math.round(targetServings) - 1));
+                  setTargetServingsOverride(Math.max(1, Math.ceil(targetServings) - 1));
                 }}
                 style={styles.stepBtn}
               >
@@ -249,7 +250,7 @@ export default function RecipeDetailScreen() {
               <Pressable
                 onPress={() => {
                   hapticSelection();
-                  setTargetServingsOverride(Math.min(30, Math.round(targetServings) + 1));
+                  setTargetServingsOverride(Math.min(30, Math.floor(targetServings) + 1));
                 }}
                 style={styles.stepBtn}
               >

@@ -34,9 +34,7 @@ export function SwipeableRow({
         onMoveShouldSetPanResponder: (_evt, gesture) =>
           gesture.dx < -14 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.6,
         onPanResponderMove: (_evt, gesture) => {
-          if (gesture.dx < 0) {
-            translateX.setValue(Math.max(gesture.dx, -135));
-          }
+          translateX.setValue(Math.min(0, Math.max(gesture.dx, -135)));
         },
         onPanResponderRelease: (_evt, gesture) => {
           if (gesture.dx <= SWIPE_THRESHOLD) {

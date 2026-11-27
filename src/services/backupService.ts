@@ -15,6 +15,10 @@ import type {
   Recipe,
 } from '@/types/larder';
 import { getWeekStartIso, parseIsoDate } from '@/utils/dates';
+import { isSafeHttpUrl } from '@/utils/recipeParser';
+
+const MAX_BACKUP_JSON_CHARS = 25_000_000;
+const MAX_EMBEDDED_PHOTO_BASE64_CHARS = 6_000_000;
 
 function getPhotosDir(): Directory {
   const dir = new Directory(Paths.document, 'recipe-photos');
@@ -122,8 +126,23 @@ export async function materializeBackupPhotos(
   const hydratedRecipes: BackupRecipeEntry[] = [];
 
   for (const r of payload.recipes) {
-    let nextUri = r.photoUri ?? null;
-    if (r.photoBase64 && typeof r.photoBase64 === 'string') {
+    // Never trust arbitrary external URIs from an imported backup file;
+    // only retain an existing photoUri if it already lives inside this app's document directory.
+    let nextUri: string | null = null;
+    if (r.photoUri && r.photoUri.startsWith(Paths.document.uri)) {
+      try {
+        const existing = new File(r.photoUri);
+        if (existing.exists) nextUri = existing.uri;
+      } catch {
+        nextUri = null;
+      }
+    }
+
+    if (
+      r.photoBase64 &&
+      typeof r.photoBase64 === 'string' &&
+      r.photoBase64.length <= MAX_EMBEDDED_PHOTO_BASE64_CHARS
+    ) {
       try {
         const rawExt = (r.photoExt ?? 'jpg').toLowerCase();
         const safeExt = ['jpg', 'jpeg', 'png', 'webp'].includes(rawExt) ? rawExt : 'jpg';
@@ -192,6 +211,9 @@ function asNonNegativeInt(val: unknown, fallback: number): number {
 }
 
 export function parseLarderBackupJson(rawText: string): LarderBackupPayload {
+  if (rawText.length > MAX_BACKUP_JSON_CHARS) {
+    throw new Error('Backup file is too large (max 25 MB).');
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawText);
@@ -276,9 +298,16 @@ export function parseLarderBackupJson(rawText: string): LarderBackupPayload {
         prepMinutes: asNonNegativeInt(r.prepMinutes, 10),
         cookMinutes: asNonNegativeInt(r.cookMinutes, 15),
         photoUri: typeof r.photoUri === 'string' ? r.photoUri : null,
-        photoBase64: typeof r.photoBase64 === 'string' ? r.photoBase64 : null,
+        photoBase64:
+          typeof r.photoBase64 === 'string' &&
+          r.photoBase64.length <= MAX_EMBEDDED_PHOTO_BASE64_CHARS
+            ? r.photoBase64
+            : null,
         photoExt: typeof r.photoExt === 'string' ? r.photoExt : null,
-        sourceUrl: typeof r.sourceUrl === 'string' && r.sourceUrl.trim() ? r.sourceUrl.trim() : null,
+        sourceUrl:
+          typeof r.sourceUrl === 'string' && isSafeHttpUrl(r.sourceUrl)
+            ? r.sourceUrl.trim()
+            : null,
         tags,
         steps,
         ingredients,

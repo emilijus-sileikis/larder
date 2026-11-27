@@ -362,8 +362,6 @@ const EN = {
   importJsonTitle: 'Import JSON Backup',
   importJsonDesc: 'Restore from a previously exported file',
   dataSection: 'Data',
-  loadSampleTitle: 'Load Sample Kitchen Data',
-  loadSampleDesc: '5 everyday recipes + common pantry staples',
   clearAllTitle: 'Clear All Data',
   clearAllDesc: 'Start fresh with an empty kitchen',
   sharingUnavailableTitle: 'Sharing Unavailable',
@@ -378,13 +376,11 @@ const EN = {
   backupRestoredMsg: (recipes: number, pantry: number, groceries: number) =>
     `Loaded ${recipes} recipes, ${pantry} pantry items, and ${groceries} grocery items.`,
   restoreFailedTitle: 'Restore Failed',
-  loadSampleConfirmMsg:
-    'This replaces your current data with 5 everyday recipes, pantry staples, and a starter meal plan.',
-  sampleLoadedTitle: 'Sample Data Loaded',
-  sampleLoadedMsg: 'Your kitchen is stocked and ready.',
   clearAllConfirmMsg:
     'Permanently delete all recipes, pantry items, meal plans, and groceries from this device? This cannot be undone.',
   clearEverythingBtn: 'Clear Everything',
+  invalidUrlTitle: 'Invalid URL',
+  invalidUrlMsg: 'Source URL must start with http:// or https://.',
 
   // v1.1 Features
   undoBtn: 'Undo',
@@ -683,8 +679,6 @@ const LT: typeof EN = {
   importJsonTitle: 'Importuoti JSON kopiją',
   importJsonDesc: 'Atkurti iš anksčiau išsaugoto failo',
   dataSection: 'Duomenys',
-  loadSampleTitle: 'Įkelti pavyzdinius duomenis',
-  loadSampleDesc: '5 kasdieniai receptai ir pagrindiniai produktai',
   clearAllTitle: 'Išvalyti visus duomenis',
   clearAllDesc: 'Pradėti nuo tuščios virtuvės',
   sharingUnavailableTitle: 'Dalijimasis nepasiekiamas',
@@ -698,13 +692,11 @@ const LT: typeof EN = {
   backupRestoredMsg: (recipes: number, pantry: number, groceries: number) =>
     `Įkelta: ${recipes} recept., ${pantry} sandėliuko prod., ${groceries} pirkinių.`,
   restoreFailedTitle: 'Atkurti nepavyko',
-  loadSampleConfirmMsg:
-    'Dabartiniai duomenys bus pakeisti 5 kasdieniais receptais, sandėliuko atsargomis ir pavyzdiniu valgiaraščiu.',
-  sampleLoadedTitle: 'Pavyzdiniai duomenys įkelti',
-  sampleLoadedMsg: 'Virtuvė paruošta darbui.',
   clearAllConfirmMsg:
     'Visam laikui ištrinti visus receptus, sandėliuko prekes, valgiaraštį ir pirkinių sąrašą? Šio veiksmo atšaukti negalima.',
   clearEverythingBtn: 'Ištrinti viską',
+  invalidUrlTitle: 'Neteisinga nuoroda',
+  invalidUrlMsg: 'Šaltinio nuoroda turi prasidėti http:// arba https://.',
 
   // v1.1 Features
   undoBtn: 'Atšaukti',
